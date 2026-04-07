@@ -59,14 +59,18 @@ def _is_virtual(name: str) -> bool:
     return any(v in lower for v in _VIRTUAL_DEVICES)
 
 
-def _find_default_mic() -> Optional[str]:
-    """Find the best physical microphone, skipping virtual audio devices."""
+def _find_default_mic() -> str:
+    """
+    Find the best physical mic, refreshed each time.
+    Skips virtual devices (BlackHole, Teams, Zoom).
+    Prefers external mics over built-in.
+    """
     devices = _list_avfoundation_devices()
     physical = [(idx, name) for idx, name in devices.get("audio", [])
                 if not _is_virtual(name)]
 
     if not physical:
-        log.warning("No physical microphone found")
+        log.warning("No physical microphone found, using :0")
         return ":0"
 
     # Prefer external mics (USB/Bluetooth) over built-in
@@ -76,7 +80,6 @@ def _find_default_mic() -> Optional[str]:
             log.info(f"Using external mic: [{idx}] {name}")
             return f":{idx}"
 
-    # Fall back to built-in
     idx, name = physical[0]
     log.info(f"Using mic: [{idx}] {name}")
     return f":{idx}"
@@ -127,25 +130,26 @@ class Recorder:
     """
 
     def __init__(self, mic_source: str = "", system_source: str = ""):
-        self.mic_source = _resolve_device(mic_source) or _find_default_mic()
-        self.system_source = _resolve_device(system_source) or _find_blackhole()
+        # Store config values — resolved fresh at each recording start
+        self._mic_config = mic_source
+        self._sys_config = system_source
         self._process: Optional[subprocess.Popen] = None
         self._output_path: Optional[Path] = None
 
-        if self.system_source:
-            log.info(f"Audio sources — mic: {self.mic_source}, system: {self.system_source}")
-        else:
-            log.warning(
-                "BlackHole not detected — system audio won't be captured.\n"
-                "Install with: brew install --cask blackhole-2ch\n"
-                "Then create a Multi-Output Device in Audio MIDI Setup."
-            )
+    def _resolve_sources(self):
+        """Re-detect audio devices (called at each recording start)."""
+        self.mic_source = _resolve_device(self._mic_config) or _find_default_mic()
+        self.system_source = _resolve_device(self._sys_config) or _find_blackhole()
+        log.info(f"Audio sources — mic: {self.mic_source}, system: {self.system_source or 'none'}")
 
     def start(self, output_path: Path) -> bool:
         """Start recording to output_path. Returns True if started successfully."""
         if self._process:
             log.warning("Already recording")
             return False
+
+        # Re-detect devices each time (handles AirPods, USB mics, etc.)
+        self._resolve_sources()
 
         self._output_path = output_path
         output_path.parent.mkdir(parents=True, exist_ok=True)

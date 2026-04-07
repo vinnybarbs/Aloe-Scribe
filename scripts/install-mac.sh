@@ -169,14 +169,6 @@ xattr -cr "/Applications/Aloe Scribe.app" 2>/dev/null || true
 echo "  Installed to /Applications/Aloe Scribe.app"
 
 # -----------------------------------------------------------
-# 8. Audio device setup
-# -----------------------------------------------------------
-echo ""
-echo -e "${GREEN}[8/8]${NC} Audio device setup..."
-echo ""
-"$VENV_DIR/bin/python3" "$PROJECT_DIR/src/main.py" --setup
-
-# -----------------------------------------------------------
 # Done
 # -----------------------------------------------------------
 echo ""
