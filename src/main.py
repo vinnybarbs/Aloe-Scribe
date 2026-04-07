@@ -13,18 +13,29 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+# Ensure Homebrew paths are available when running from a .app bundle
+# (macOS strips PATH to just /usr/bin:/bin for bundled apps)
+for _p in ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/whisper.cpp/build/bin")]:
+    if _p not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _p + ":" + os.environ.get("PATH", "")
+
 try:
     import tomllib
 except ModuleNotFoundError:
     import tomli as tomllib
 
 # ---------------------------------------------------------------------------
-# Logging
+# Logging — write to /tmp/aloe-scribe.log so we can debug bundled app
 # ---------------------------------------------------------------------------
+LOG_FILE = Path("/tmp/aloe-scribe.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(str(LOG_FILE)),
+    ],
 )
 log = logging.getLogger("aloe-scribe")
 

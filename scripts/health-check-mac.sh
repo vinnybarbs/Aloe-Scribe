@@ -127,9 +127,16 @@ echo "  Speak clearly into your mic NOW!"
 echo "-----------------------------------------"
 echo ""
 
-# Use default audio input (:0)
+# Find the actual microphone (not BlackHole)
+MIC_IDX=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 | \
+    grep -A50 "AVFoundation audio devices" | \
+    grep -iv "blackhole" | \
+    grep -o '\[[0-9]*\]' | head -1 | tr -d '[]')
+MIC_IDX=${MIC_IDX:-0}
+echo "  Using audio device index: :${MIC_IDX}"
+
 ffmpeg -y \
-    -f avfoundation -i ":0" \
+    -f avfoundation -i ":${MIC_IDX}" \
     -ar 16000 -ac 1 -c:a pcm_s16le \
     -t "$RECORD_SECONDS" \
     "$TEST_WAV" 2>/dev/null
