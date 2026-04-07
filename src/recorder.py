@@ -37,7 +37,39 @@ def _find_monitor_source() -> Optional[str]:
 
 
 def _find_default_mic() -> str:
-    """Return the PulseAudio default source name."""
+    """
+    Find the best microphone source via PulseAudio/PipeWire.
+    Prefers external USB/Bluetooth mics over built-in.
+    Re-detected each time recording starts.
+    """
+    try:
+        out = subprocess.check_output(
+            ["pactl", "list", "short", "sources"], text=True
+        )
+        sources = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                name = parts[1]
+                # Skip monitors (they capture output, not input)
+                if ".monitor" in name:
+                    continue
+                sources.append(name)
+
+        # Prefer USB/external mics over built-in
+        for src in sources:
+            if "usb" in src.lower() or "bluetooth" in src.lower():
+                log.info(f"Using external mic: {src}")
+                return src
+
+        # Fall back to any non-monitor source
+        if sources:
+            log.info(f"Using mic: {sources[0]}")
+            return sources[0]
+    except Exception as e:
+        log.warning(f"Could not detect mic: {e}")
+
+    # Last resort: system default
     try:
         out = subprocess.check_output(
             ["pactl", "get-default-source"], text=True
@@ -61,8 +93,8 @@ class Recorder:
     """
 
     def __init__(self, mic_source: str = "", system_source: str = ""):
-        self.mic_source = mic_source or _find_default_mic()
-        self.system_source = system_source or _find_monitor_source()
+        self._mic_config = mic_source
+        self._sys_config = system_source
         self._process: Optional[subprocess.Popen] = None
         self._output_path: Optional[Path] = None
 
@@ -71,6 +103,11 @@ class Recorder:
         if self._process:
             log.warning("Already recording")
             return False
+
+        # Re-detect audio devices each time (handles USB mics plugged in after app start)
+        self.mic_source = self._mic_config or _find_default_mic()
+        self.system_source = self._sys_config or _find_monitor_source()
+        log.info(f"Audio sources — mic: {self.mic_source}, system: {self.system_source or 'none'}")
 
         self._output_path = output_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
