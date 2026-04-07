@@ -499,10 +499,12 @@ class AloeScribeWindow(QMainWindow):
         # Force stylesheet refresh for the new object name
         self._status_label.style().unpolish(self._status_label)
         self._status_label.style().polish(self._status_label)
-        # Update tray icon
+        # Update tray icon and menu (we're on the main thread here via signals)
         if hasattr(self, "_tray") and self._tray:
             color = _STATE_COLORS.get(self._state, "#3A8C5A")
             self._tray.setIcon(_make_leaf_icon(color))
+        if hasattr(self, "_app_ref") and self._app_ref:
+            self._app_ref._update_tray_menu()
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +558,7 @@ class AloeScribeApp:
         # System tray
         self._setup_tray()
         self._window._tray = self._tray
+        self._window._app_ref = self
 
         # Register tray for notifications
         import notifications
@@ -647,8 +650,6 @@ class AloeScribeApp:
     def notify_upcoming(self, meeting):
         if self._window:
             self._window.notify_upcoming(meeting)
-            self._update_tray_menu()
-            # Also send a notification
             import notifications
             notifications.send(
                 "Aloe Scribe",
@@ -658,17 +659,14 @@ class AloeScribeApp:
     def set_recording(self, meeting):
         if self._window:
             self._window.set_recording(meeting)
-            self._update_tray_menu()
 
     def set_processing(self):
         if self._window:
             self._window.set_processing()
-            self._update_tray_menu()
 
     def set_done(self, output_path):
         if self._window:
             self._window.set_done(output_path)
-            self._update_tray_menu()
             import notifications
             notifications.send(
                 "Aloe Scribe — Done",
@@ -678,4 +676,3 @@ class AloeScribeApp:
     def set_idle(self):
         if self._window:
             self._window.set_idle()
-            self._update_tray_menu()
