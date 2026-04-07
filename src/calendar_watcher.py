@@ -86,7 +86,7 @@ class CalendarWatcher:
 
     def _refresh(self):
         """Fetch and parse the iCal feed."""
-        log.debug("Fetching calendar...")
+        log.info("Fetching calendar...")
         resp = requests.get(self.ical_url, timeout=10)
         resp.raise_for_status()
         cal = Calendar.from_ical(resp.content)
@@ -113,7 +113,10 @@ class CalendarWatcher:
 
         # Sort by start time
         self._meetings = sorted(meetings, key=lambda m: m.start)
-        log.debug(f"Found {len(self._meetings)} upcoming meeting(s)")
+        log.info(f"Found {len(self._meetings)} upcoming meeting(s)")
+        for m in self._meetings[:5]:
+            mins = (m.start - now).total_seconds() / 60
+            log.info(f"  → {m.title} in {mins:.0f} min ({m.start.strftime('%H:%M UTC')})")
 
     def _check(self):
         """Check if any meeting needs a notification or start/end signal."""
