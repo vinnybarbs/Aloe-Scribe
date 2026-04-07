@@ -18,11 +18,14 @@ mkdir -p "$CONTENTS/MacOS"
 mkdir -p "$CONTENTS/Resources"
 
 # --- Launcher script ---
-cat > "$CONTENTS/MacOS/aloe-scribe" << EOF
+# Must use bash that exec's python — but launched via `open` command
+# which gives macOS the .app bundle context for dock icon + window focus
+cat > "$CONTENTS/MacOS/aloe-scribe" << LAUNCHER
 #!/bin/bash
+export PROJECT_DIR="$PROJECT_DIR"
 cd "$PROJECT_DIR"
 exec "$VENV_PYTHON" "$PROJECT_DIR/src/main.py"
-EOF
+LAUNCHER
 chmod +x "$CONTENTS/MacOS/aloe-scribe"
 
 # --- Info.plist ---
@@ -84,8 +87,9 @@ echo ""
 echo "Built: $APP_DIR"
 echo ""
 
-# Copy to Applications
+# Copy to Applications (remove old copy first)
 if [ -d "/Applications" ]; then
+    rm -rf "/Applications/${APP_NAME}.app"
     cp -R "$APP_DIR" "/Applications/${APP_NAME}.app"
     echo "Installed to /Applications/${APP_NAME}.app"
     echo ""

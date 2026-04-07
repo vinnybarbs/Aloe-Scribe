@@ -27,14 +27,15 @@ from PyQt6.QtWidgets import (
     QFrame,
 )
 
-# Ensure macOS treats this as a regular app with a dock icon (must be called
-# before QApplication is created)
-try:
-    from AppKit import NSApplication, NSApplicationActivationPolicyRegular
-    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
-except ImportError:
-    # PyObjC not installed — try the Info.plist approach at runtime
-    pass
+def _setup_macos_app():
+    """Register as a proper macOS GUI app with dock icon."""
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        app.activateIgnoringOtherApps_(True)
+    except ImportError:
+        log.warning("PyObjC not installed — dock icon may not appear")
 
 log = logging.getLogger(__name__)
 
@@ -516,16 +517,12 @@ class AloeScribeApp:
         self._tray: Optional[QSystemTrayIcon] = None
 
     def run(self):
+        # Set up as GUI app BEFORE creating QApplication
+        _setup_macos_app()
+
         self._app = QApplication(sys.argv)
         self._app.setApplicationName("Aloe Scribe")
         self._app.setApplicationDisplayName("Aloe Scribe")
-
-        # Force dock icon on macOS (PyObjC fallback if import at top failed)
-        try:
-            from AppKit import NSApplication, NSApplicationActivationPolicyRegular
-            NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
-        except ImportError:
-            pass
 
         # Dock icon
         icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
@@ -555,7 +552,11 @@ class AloeScribeApp:
         # Re-activate on dock icon click
         self._app.applicationStateChanged.connect(self._on_app_state_changed)
 
+        # Show window and bring to front
         self._window.show()
+        self._window.raise_()
+        self._window.activateWindow()
+
         sys.exit(self._app.exec())
 
     def _setup_tray(self):
