@@ -569,6 +569,8 @@ class AloeScribeApp(Gtk.Application):
     def notify_upcoming(self, meeting):
         if self._window:
             self._window.notify_upcoming(meeting)
+            import notifications
+            notifications.send("Aloe Scribe", f"Meeting in ~4 min: {meeting.title}")
 
     def set_recording(self, meeting):
         if self._window:
@@ -581,6 +583,8 @@ class AloeScribeApp(Gtk.Application):
     def set_done(self, output_path):
         if self._window:
             self._window.set_done(output_path)
+            import notifications
+            notifications.send("Aloe Scribe — Done", f"Transcript saved: {output_path.name}")
 
     def set_idle(self):
         if self._window:
