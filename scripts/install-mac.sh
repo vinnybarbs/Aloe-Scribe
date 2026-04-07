@@ -62,7 +62,8 @@ python3 -m venv "$VENV_DIR" 2>/dev/null || python3.12 -m venv "$VENV_DIR"
     "pyobjc-framework-Cocoa>=10.0" \
     icalendar>=5.0.0 \
     requests>=2.31.0 \
-    pillow>=10.0.0
+    pillow>=10.0.0 \
+    tomli>=2.0.0
 echo "  Python venv + PyQt6 OK"
 
 # -----------------------------------------------------------

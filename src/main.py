@@ -13,7 +13,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-import tomllib  # Python 3.11+; use `tomli` as a fallback
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 # ---------------------------------------------------------------------------
 # Logging
