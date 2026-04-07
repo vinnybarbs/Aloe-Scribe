@@ -125,7 +125,7 @@ _STYLESHEET = """
         font-size: 32px;
         font-weight: bold;
         color: #222222;
-        font-family: monospace;
+        font-family: "Menlo", "SF Mono", "Courier New", monospace;
     }
     QLabel#statusIdle    { color: #888888; }
     QLabel#statusRecord  { color: #C94040; }

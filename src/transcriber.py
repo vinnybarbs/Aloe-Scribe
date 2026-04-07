@@ -84,13 +84,10 @@ class Transcriber:
             self.binary_path,
             "-m", self.model_path,
             "-f", str(audio_path),
-            "--output-txt",      # plain text output
-            "-otxt",
-            "--print-colors",    # speaker color hints (parsed below)
             "-l", "en",
         ]
 
-        log.debug(f"Running: {' '.join(cmd)}")
+        log.info(f"Running: {' '.join(cmd)}")
         try:
             result = subprocess.run(
                 cmd,
@@ -101,7 +98,12 @@ class Transcriber:
             if result.returncode != 0:
                 log.error(f"whisper.cpp error: {result.stderr}")
                 return None
-            return result.stdout
+            # Log output for debugging
+            log.info(f"Whisper stdout length: {len(result.stdout)} chars")
+            if not result.stdout.strip():
+                log.warning(f"Whisper produced empty stdout. stderr: {result.stderr[:500]}")
+            # whisper.cpp outputs to stderr on some builds
+            return result.stdout or result.stderr
         except subprocess.TimeoutExpired:
             log.error("Whisper timed out")
             return None
@@ -114,6 +116,9 @@ class Transcriber:
         Parse whisper.cpp timestamped output.
         Format: [HH:MM:SS.mmm --> HH:MM:SS.mmm]   text
         """
+        # Strip ANSI escape codes
+        raw = re.sub(r"\x1b\[[0-9;]*m", "", raw)
+
         segments = []
         pattern = re.compile(
             r"\[(\d+):(\d+):(\d+)\.(\d+)\s*-->\s*\d+:\d+:\d+\.\d+\]\s*(.*)"
@@ -132,10 +137,20 @@ class Transcriber:
                     segments.append(
                         TranscriptSegment(
                             start_ms=start_ms,
-                            end_ms=start_ms,  # end not critical for display
+                            end_ms=start_ms,
                             text=text.strip(),
                         )
                     )
+
+        # Fallback: if no timestamps parsed, grab any non-empty lines as plain text
+        if not segments:
+            log.warning("No timestamped segments found — falling back to raw text")
+            for line in raw.splitlines():
+                text = line.strip()
+                # Skip whisper log lines
+                if text and not text.startswith(("[", "whisper_", "main:", "system_info")):
+                    segments.append(TranscriptSegment(start_ms=0, end_ms=0, text=text))
+
         return segments
 
     def _build_markdown(
