@@ -525,7 +525,11 @@ class AloeScribeApp:
         self._app.setApplicationDisplayName("Aloe Scribe")
 
         # Dock icon
-        icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
+        # Find icon — works both in dev and inside .app bundle
+        if getattr(sys, "frozen", False):
+            icon_path = Path(sys.executable).parent.parent / "Resources" / "assets" / "icon.png"
+        else:
+            icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
         if icon_path.exists():
             self._app.setWindowIcon(QIcon(str(icon_path)))
         else:

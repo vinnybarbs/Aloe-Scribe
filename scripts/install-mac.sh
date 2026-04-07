@@ -45,17 +45,19 @@ if brew list --cask blackhole-2ch &>/dev/null 2>&1; then
 else
     echo "  BlackHole not installed — recording mic only (fine for most meetings)"
     echo "  Your mic picks up your voice directly and call audio from speakers."
-    echo ""
-    echo -e "${YELLOW}  Optional:${NC} To also capture system audio directly:"
-    echo "    brew install --cask blackhole-2ch"
-    echo "    Then set up a Multi-Output Device in Audio MIDI Setup."
 fi
 
 # -----------------------------------------------------------
 # 4. Python venv + dependencies
 # -----------------------------------------------------------
 echo -e "${GREEN}[4/7]${NC} Setting up Python environment..."
-python3 -m venv "$VENV_DIR" 2>/dev/null || python3.12 -m venv "$VENV_DIR"
+# Use Homebrew's python3.12 for the venv (has tomllib built-in)
+BREW_PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
+if [ -x "$BREW_PYTHON" ]; then
+    "$BREW_PYTHON" -m venv "$VENV_DIR"
+else
+    python3 -m venv "$VENV_DIR"
+fi
 "$VENV_DIR/bin/pip" install --upgrade pip -q
 "$VENV_DIR/bin/pip" install -q \
     PyQt6>=6.6.0 \
@@ -63,8 +65,9 @@ python3 -m venv "$VENV_DIR" 2>/dev/null || python3.12 -m venv "$VENV_DIR"
     icalendar>=5.0.0 \
     requests>=2.31.0 \
     pillow>=10.0.0 \
-    tomli>=2.0.0
-echo "  Python venv + PyQt6 OK"
+    tomli>=2.0.0 \
+    py2app>=0.28.0
+echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
 
 # -----------------------------------------------------------
 # 5. whisper.cpp with Metal
@@ -97,61 +100,67 @@ echo "  Model OK: $MODEL_PATH"
 # 6. Update config
 # -----------------------------------------------------------
 echo -e "${GREEN}[6/7]${NC} Updating config..."
+cd "$PROJECT_DIR"
 CONFIG="$PROJECT_DIR/config/config.toml"
 
-# Always ensure whisper paths point to the right location
 sed -i '' "s|binary_path = .*|binary_path = \"$WHISPER_DIR/build/bin/whisper-cli\"|" "$CONFIG"
 sed -i '' "s|model_path = .*|model_path = \"$MODEL_PATH\"|" "$CONFIG"
-echo "  Config updated: binary=$WHISPER_DIR/build/bin/whisper-cli"
-echo "  Config updated: model=$MODEL_PATH"
+echo "  Config updated with whisper paths"
 
 # -----------------------------------------------------------
-# 7. Launchd service (autostart on login)
+# 7. Build native .app bundle with py2app
 # -----------------------------------------------------------
-echo -e "${GREEN}[7/7]${NC} Setting up autostart..."
-PLIST_NAME="com.aloescribe.app"
-PLIST_DIR="$HOME/Library/LaunchAgents"
-PLIST_PATH="$PLIST_DIR/$PLIST_NAME.plist"
-mkdir -p "$PLIST_DIR"
+echo -e "${GREEN}[7/7]${NC} Building Aloe Scribe.app..."
 
-cat > "$PLIST_PATH" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$PLIST_NAME</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$VENV_DIR/bin/python3</string>
-        <string>$PROJECT_DIR/src/main.py</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>$PROJECT_DIR</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/tmp/aloe-scribe.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/aloe-scribe.log</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
-    </dict>
-</dict>
-</plist>
-EOF
+cd "$PROJECT_DIR"
 
-# Load the service
-launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load "$PLIST_PATH"
-echo "  Autostart enabled"
+# Clean previous builds
+rm -rf build dist
+
+# Generate .icns icon from PNG
+ICON_SRC="$PROJECT_DIR/assets/icon.png"
+ICNS_OUT="$PROJECT_DIR/assets/AppIcon.icns"
+if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null && [ ! -f "$ICNS_OUT" ]; then
+    echo "  Generating .icns icon..."
+    ICONSET="/tmp/AloeScribe.iconset"
+    rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+    for SIZE in 16 32 128 256 512; do
+        sips -z $SIZE $SIZE "$ICON_SRC" --out "$ICONSET/icon_${SIZE}x${SIZE}.png" &>/dev/null
+        DOUBLE=$((SIZE * 2))
+        sips -z $DOUBLE $DOUBLE "$ICON_SRC" --out "$ICONSET/icon_${SIZE}x${SIZE}@2x.png" &>/dev/null
+    done
+    iconutil -c icns "$ICONSET" -o "$ICNS_OUT" 2>/dev/null
+    rm -rf "$ICONSET"
+fi
+
+# Update setup.py to use .icns if it exists
+if [ -f "$ICNS_OUT" ]; then
+    sed -i '' 's|"argv_emulation": False,|"argv_emulation": False, "iconfile": "assets/AppIcon.icns",|' "$PROJECT_DIR/setup.py"
+fi
+
+# Build the .app
+"$VENV_DIR/bin/python3" setup.py py2app 2>&1 | tail -5
+
+# py2app names the app after the script (main.app) — rename it
+if [ -d "dist/main.app" ]; then
+    mv "dist/main.app" "dist/Aloe Scribe.app"
+fi
+
+# Fix the CFBundleExecutable in the renamed app
+if [ -d "dist/Aloe Scribe.app" ]; then
+    mv "dist/Aloe Scribe.app/Contents/MacOS/main" "dist/Aloe Scribe.app/Contents/MacOS/Aloe Scribe" 2>/dev/null || true
+    # Update the plist to match
+    /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable 'Aloe Scribe'" "dist/Aloe Scribe.app/Contents/Info.plist" 2>/dev/null || true
+fi
+
+# Install to /Applications
+rm -rf "/Applications/Aloe Scribe.app"
+cp -R "dist/Aloe Scribe.app" "/Applications/Aloe Scribe.app"
+
+# Clear quarantine
+xattr -cr "/Applications/Aloe Scribe.app" 2>/dev/null || true
+
+echo "  Installed to /Applications/Aloe Scribe.app"
 
 # -----------------------------------------------------------
 # Done
@@ -161,16 +170,12 @@ echo "${BOLD}=========================================${NC}"
 echo "${BOLD}  Setup complete!${NC}"
 echo "${BOLD}=========================================${NC}"
 echo ""
-echo "  Aloe Scribe will start automatically on login."
-echo ""
-echo "  Manual controls:"
-echo "    Start:   launchctl start com.aloescribe.app"
-echo "    Stop:    launchctl stop com.aloescribe.app"
-echo "    Logs:    tail -f /tmp/aloe-scribe.log"
-echo "    Disable: launchctl unload ~/Library/LaunchAgents/com.aloescribe.app.plist"
+echo "  Open Aloe Scribe from:"
+echo "    - Spotlight (Cmd+Space → 'Aloe Scribe')"
+echo "    - /Applications/Aloe Scribe.app"
+echo "    - Drag to Dock to pin it"
 echo ""
 echo "  Next steps:"
-echo "    1. Edit config/config.toml with your iCal URL"
+echo "    1. Edit ~/aloe-scribe/config/config.toml with your iCal URL"
 echo "    2. Run: bash scripts/health-check-mac.sh"
-echo "    3. Set up rclone for SharePoint: rclone config"
 echo ""

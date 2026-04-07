@@ -5,3 +5,7 @@ __pycache__/
 /tmp/
 .DS_Store
 *.log
+build/
+dist/
+*.egg-info/
+assets/AppIcon.icns

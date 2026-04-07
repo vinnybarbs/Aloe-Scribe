@@ -31,10 +31,16 @@ log = logging.getLogger("aloe-scribe")
 # ---------------------------------------------------------------------------
 # Resolve paths
 # ---------------------------------------------------------------------------
-ROOT = Path(__file__).parent.parent
+if getattr(sys, "frozen", False):
+    # Running inside a py2app .app bundle
+    ROOT = Path(sys.executable).parent.parent / "Resources"
+else:
+    ROOT = Path(__file__).parent.parent
+
 CONFIG_PATH = ROOT / "config" / "config.toml"
 SRC = ROOT / "src"
-sys.path.insert(0, str(SRC))
+if SRC.exists():
+    sys.path.insert(0, str(SRC))
 
 from calendar_watcher import CalendarWatcher, Meeting
 from transcriber import Transcriber
