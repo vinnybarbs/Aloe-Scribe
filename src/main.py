@@ -233,12 +233,80 @@ class AloeScribe:
 
 
 # ---------------------------------------------------------------------------
+# Audio device setup (--setup flag)
+# ---------------------------------------------------------------------------
+def run_setup():
+    """Interactive audio device picker — writes choice to config.toml."""
+    if sys.platform != "darwin":
+        print("Audio setup is for macOS. On Linux, devices auto-detect via PulseAudio.")
+        return
+
+    from recorder_mac import _list_avfoundation_devices, _is_virtual
+
+    devices = _list_avfoundation_devices()
+    audio = devices.get("audio", [])
+
+    if not audio:
+        print("No audio devices found.")
+        return
+
+    print("\n  Available audio devices:\n")
+    for idx, name in audio:
+        tag = ""
+        if _is_virtual(name):
+            tag = " (virtual — skipped)"
+        elif "blackhole" in name.lower():
+            tag = " (system audio capture)"
+        print(f"    [{idx}] {name}{tag}")
+
+    print()
+    mic = input("  Enter mic device number (or press Enter for auto-detect): ").strip()
+    sys_audio = input("  Enter system audio device number (or Enter to skip): ").strip()
+
+    # Read current config
+    config_path = CONFIG_PATH
+    config_text = config_path.read_text()
+
+    if mic:
+        # Save by NAME so it works even when device indices change
+        # (e.g. AirPods connecting/disconnecting shuffles indices)
+        chosen_name = next((n for i, n in audio if str(i) == mic), "")
+        if chosen_name:
+            import re
+            config_text = re.sub(
+                r'mic_source\s*=\s*"[^"]*"',
+                f'mic_source = "{chosen_name}"',
+                config_text,
+            )
+            print(f"  Mic set to: {chosen_name}")
+            print(f"  (Saved by name — will auto-find the right device each launch)")
+
+    if sys_audio:
+        chosen_name = next((n for i, n in audio if str(i) == sys_audio), "")
+        if chosen_name:
+            import re
+            config_text = re.sub(
+                r'system_source\s*=\s*"[^"]*"',
+                f'system_source = "{chosen_name}"',
+                config_text,
+            )
+            print(f"  System audio set to: {chosen_name}")
+
+    config_path.write_text(config_text)
+    print(f"\n  Config saved to {config_path}")
+    print(f"  Leave mic_source blank in config to always auto-detect.\n")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    try:
-        config = load_config()
-        app = AloeScribe(config)
-        app.run()
-    except KeyboardInterrupt:
-        log.info("Interrupted — bye")
+    if "--setup" in sys.argv:
+        run_setup()
+    else:
+        try:
+            config = load_config()
+            app = AloeScribe(config)
+            app.run()
+        except KeyboardInterrupt:
+            log.info("Interrupted — bye")

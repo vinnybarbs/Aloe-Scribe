@@ -50,23 +50,36 @@ def _list_avfoundation_devices() -> dict:
     return {"audio": audio_devices}
 
 
+# Virtual/software audio devices to skip when auto-detecting a mic
+_VIRTUAL_DEVICES = {"blackhole", "microsoft teams", "zoomaudio", "zoom audio"}
+
+
+def _is_virtual(name: str) -> bool:
+    lower = name.lower()
+    return any(v in lower for v in _VIRTUAL_DEVICES)
+
+
 def _find_default_mic() -> Optional[str]:
-    """Find the built-in or external microphone (not BlackHole)."""
+    """Find the best physical microphone, skipping virtual audio devices."""
     devices = _list_avfoundation_devices()
-    for idx, name in devices.get("audio", []):
+    physical = [(idx, name) for idx, name in devices.get("audio", [])
+                if not _is_virtual(name)]
+
+    if not physical:
+        log.warning("No physical microphone found")
+        return ":0"
+
+    # Prefer external mics (USB/Bluetooth) over built-in
+    for idx, name in physical:
         lower = name.lower()
-        if "blackhole" in lower:
-            continue  # skip virtual devices
-        if "microphone" in lower or "mic" in lower or "input" in lower:
-            log.info(f"Using mic: [{idx}] {name}")
+        if "macbook" not in lower and "built" not in lower:
+            log.info(f"Using external mic: [{idx}] {name}")
             return f":{idx}"
-    # Fallback: first non-BlackHole audio device
-    for idx, name in devices.get("audio", []):
-        if "blackhole" not in name.lower():
-            log.info(f"Using audio device as mic: [{idx}] {name}")
-            return f":{idx}"
-    log.warning("No microphone found")
-    return ":0"
+
+    # Fall back to built-in
+    idx, name = physical[0]
+    log.info(f"Using mic: [{idx}] {name}")
+    return f":{idx}"
 
 
 def _find_blackhole() -> Optional[str]:
@@ -82,6 +95,29 @@ def _find_blackhole() -> Optional[str]:
     return None
 
 
+def _resolve_device(config_value: str) -> Optional[str]:
+    """
+    Resolve a device config value to an avfoundation index string.
+    Config can be:
+      - "" (empty) → auto-detect
+      - ":2" → literal index (used as-is)
+      - "Jabra SPEAK" → name search (looked up each launch)
+    """
+    if not config_value:
+        return None
+    if config_value.startswith(":"):
+        return config_value  # already an index
+    # Search by name
+    devices = _list_avfoundation_devices()
+    config_lower = config_value.lower()
+    for idx, name in devices.get("audio", []):
+        if config_lower in name.lower():
+            log.info(f"Resolved '{config_value}' → [{idx}] {name}")
+            return f":{idx}"
+    log.warning(f"Device '{config_value}' not found — will auto-detect")
+    return None
+
+
 class Recorder:
     """
     Records mic + system audio into a single WAV file using ffmpeg on macOS.
@@ -91,8 +127,8 @@ class Recorder:
     """
 
     def __init__(self, mic_source: str = "", system_source: str = ""):
-        self.mic_source = mic_source or _find_default_mic()
-        self.system_source = system_source or _find_blackhole()
+        self.mic_source = _resolve_device(mic_source) or _find_default_mic()
+        self.system_source = _resolve_device(system_source) or _find_blackhole()
         self._process: Optional[subprocess.Popen] = None
         self._output_path: Optional[Path] = None
 

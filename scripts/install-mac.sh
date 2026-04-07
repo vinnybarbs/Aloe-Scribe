@@ -169,6 +169,14 @@ xattr -cr "/Applications/Aloe Scribe.app" 2>/dev/null || true
 echo "  Installed to /Applications/Aloe Scribe.app"
 
 # -----------------------------------------------------------
+# 8. Audio device setup
+# -----------------------------------------------------------
+echo ""
+echo -e "${GREEN}[8/8]${NC} Audio device setup..."
+echo ""
+"$VENV_DIR/bin/python3" "$PROJECT_DIR/src/main.py" --setup
+
+# -----------------------------------------------------------
 # Done
 # -----------------------------------------------------------
 echo ""
@@ -180,6 +188,9 @@ echo "  Open Aloe Scribe from:"
 echo "    - Spotlight (Cmd+Space → 'Aloe Scribe')"
 echo "    - /Applications/Aloe Scribe.app"
 echo "    - Drag to Dock to pin it"
+echo ""
+echo "  To change audio devices later:"
+echo "    cd ~/aloe-scribe && .venv/bin/python3 src/main.py --setup"
 echo ""
 echo "  Next steps:"
 echo "    1. Edit ~/aloe-scribe/config/config.toml with your iCal URL"
