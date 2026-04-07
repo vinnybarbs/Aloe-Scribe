@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal, QObject
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPolygon, QPen, QAction
 from PyQt6.QtWidgets import (
     QApplication,
@@ -64,9 +64,7 @@ def _make_leaf_pixmap(color: str = "#3A8C5A", size: int = 64) -> QPixmap:
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
     # Leaf polygon
-    polygon = QPolygon([])
-    for x, y in _LEAF_POINTS:
-        polygon.append(int(x), int(y))
+    polygon = QPolygon([QPoint(int(x), int(y)) for x, y in _LEAF_POINTS])
 
     p.setBrush(QColor(color))
     p.setPen(Qt.PenStyle.NoPen)

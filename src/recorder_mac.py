@@ -50,8 +50,22 @@ def _list_avfoundation_devices() -> dict:
     return {"audio": audio_devices}
 
 
-def _find_default_mic() -> str:
-    """Return the avfoundation index for the default mic (\":0\" = first audio device)."""
+def _find_default_mic() -> Optional[str]:
+    """Find the built-in or external microphone (not BlackHole)."""
+    devices = _list_avfoundation_devices()
+    for idx, name in devices.get("audio", []):
+        lower = name.lower()
+        if "blackhole" in lower:
+            continue  # skip virtual devices
+        if "microphone" in lower or "mic" in lower or "input" in lower:
+            log.info(f"Using mic: [{idx}] {name}")
+            return f":{idx}"
+    # Fallback: first non-BlackHole audio device
+    for idx, name in devices.get("audio", []):
+        if "blackhole" not in name.lower():
+            log.info(f"Using audio device as mic: [{idx}] {name}")
+            return f":{idx}"
+    log.warning("No microphone found")
     return ":0"
 
 
