@@ -27,6 +27,15 @@ from PyQt6.QtWidgets import (
     QFrame,
 )
 
+# Ensure macOS treats this as a regular app with a dock icon (must be called
+# before QApplication is created)
+try:
+    from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+except ImportError:
+    # PyObjC not installed — try the Info.plist approach at runtime
+    pass
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -512,6 +521,13 @@ class AloeScribeApp:
         self._app = QApplication(sys.argv)
         self._app.setApplicationName("Aloe Scribe")
         self._app.setApplicationDisplayName("Aloe Scribe")
+
+        # Force dock icon on macOS (PyObjC fallback if import at top failed)
+        try:
+            from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+            NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        except ImportError:
+            pass
 
         # Dock icon
         icon_path = Path(__file__).parent.parent / "assets" / "icon.png"

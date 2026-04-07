@@ -107,9 +107,22 @@ class Recorder:
             self._process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
+            # Give ffmpeg a moment to fail (e.g. permission denied)
+            import time
+            time.sleep(0.5)
+            if self._process.poll() is not None:
+                _, stderr = self._process.communicate()
+                log.error(f"ffmpeg exited immediately: {stderr.decode(errors='replace')}")
+                if "Permission" in stderr.decode(errors='replace') or "denied" in stderr.decode(errors='replace'):
+                    log.error(
+                        "Microphone access denied. Grant permission in:\n"
+                        "  System Settings → Privacy & Security → Microphone"
+                    )
+                self._process = None
+                return False
             return True
         except FileNotFoundError:
             log.error("ffmpeg not found — install with: brew install ffmpeg")

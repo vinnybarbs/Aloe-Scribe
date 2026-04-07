@@ -37,22 +37,18 @@ brew install ffmpeg rclone python@3.12 cmake git 2>/dev/null || true
 echo "  ffmpeg, rclone, python, cmake OK"
 
 # -----------------------------------------------------------
-# 3. BlackHole (system audio capture)
+# 3. BlackHole (optional — system audio capture)
 # -----------------------------------------------------------
-echo -e "${GREEN}[3/7]${NC} Checking BlackHole..."
+echo -e "${GREEN}[3/7]${NC} BlackHole (optional)..."
 if brew list --cask blackhole-2ch &>/dev/null 2>&1; then
-    echo "  BlackHole already installed"
+    echo "  BlackHole installed — system audio capture available"
 else
-    echo "  Installing BlackHole 2ch for system audio capture..."
-    brew install --cask blackhole-2ch || true
+    echo "  BlackHole not installed — recording mic only (fine for most meetings)"
+    echo "  Your mic picks up your voice directly and call audio from speakers."
     echo ""
-    echo -e "${YELLOW}  IMPORTANT: You need to create a Multi-Output Device:${NC}"
-    echo "  1. Open Audio MIDI Setup (Spotlight → 'Audio MIDI Setup')"
-    echo "  2. Click '+' at bottom left → Create Multi-Output Device"
-    echo "  3. Check BOTH your speakers/headphones AND 'BlackHole 2ch'"
-    echo "  4. Right-click the Multi-Output Device → 'Use This Device For Sound Output'"
-    echo ""
-    read -p "  Press Enter when done (or skip for now)..."
+    echo -e "${YELLOW}  Optional:${NC} To also capture system audio directly:"
+    echo "    brew install --cask blackhole-2ch"
+    echo "    Then set up a Multi-Output Device in Audio MIDI Setup."
 fi
 
 # -----------------------------------------------------------
@@ -63,6 +59,7 @@ python3 -m venv "$VENV_DIR" 2>/dev/null || python3.12 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip -q
 "$VENV_DIR/bin/pip" install -q \
     PyQt6>=6.6.0 \
+    "pyobjc-framework-Cocoa>=10.0" \
     icalendar>=5.0.0 \
     requests>=2.31.0 \
     pillow>=10.0.0
@@ -101,14 +98,11 @@ echo "  Model OK: $MODEL_PATH"
 echo -e "${GREEN}[6/7]${NC} Updating config..."
 CONFIG="$PROJECT_DIR/config/config.toml"
 
-# Update whisper paths if they point to the default Linux location
-if grep -q "/home/" "$CONFIG" 2>/dev/null; then
-    sed -i '' "s|binary_path = .*|binary_path = \"$WHISPER_DIR/build/bin/whisper-cli\"|" "$CONFIG"
-    sed -i '' "s|model_path = .*|model_path = \"$MODEL_PATH\"|" "$CONFIG"
-    echo "  Config updated with macOS paths"
-else
-    echo "  Config already has correct paths"
-fi
+# Always ensure whisper paths point to the right location
+sed -i '' "s|binary_path = .*|binary_path = \"$WHISPER_DIR/build/bin/whisper-cli\"|" "$CONFIG"
+sed -i '' "s|model_path = .*|model_path = \"$MODEL_PATH\"|" "$CONFIG"
+echo "  Config updated: binary=$WHISPER_DIR/build/bin/whisper-cli"
+echo "  Config updated: model=$MODEL_PATH"
 
 # -----------------------------------------------------------
 # 7. Launchd service (autostart on login)
