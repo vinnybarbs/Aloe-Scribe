@@ -1,0 +1,4 @@
+PyQt6>=6.6.0
+icalendar>=5.0.0
+requests>=2.31.0
+pillow>=10.0.0

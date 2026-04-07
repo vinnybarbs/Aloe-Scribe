@@ -1,0 +1,63 @@
+# Aloe Scribe — Configuration
+# Edit this file then restart Aloe Scribe
+
+[calendar]
+# Paste your iCal URL here.
+# Google Calendar: Settings → your calendar → "Secret address in iCal format"
+# Outlook/M365:   Settings → View all Outlook settings → Calendar → Shared calendars → Publish → copy ICS link
+ical_url = ""
+
+# How many minutes before a meeting to show the prompt
+notify_minutes_before = 4
+
+# How often to check the calendar (minutes)
+poll_interval_minutes = 5
+
+[audio]
+# Leave blank to auto-detect your default mic and system audio
+# Linux:  Run `pactl list short sources` to list available sources
+# macOS:  Run `ffmpeg -f avfoundation -list_devices true -i ""` to list devices
+#         System audio requires BlackHole: brew install --cask blackhole-2ch
+mic_source = ""
+system_source = ""  # Linux: .monitor source | macOS: BlackHole device name
+
+[whisper]
+# Path to your whisper.cpp binary
+# Install: https://github.com/ggerganov/whisper.cpp
+# macOS: build with Metal for GPU acceleration: cmake -B build -DWHISPER_METAL=ON
+binary_path = "~/whisper.cpp/build/bin/whisper-cli"
+
+# Model to use — larger = more accurate but slower
+# tiny, base, small, medium, large-v3
+model = "small"
+
+# Path to whisper model file
+# Download with: bash /path/to/whisper.cpp/models/download-ggml-model.sh small
+model_path = "~/whisper.cpp/models/ggml-small.bin"
+
+[output]
+# Where transcripts land locally before syncing
+local_dir = "~/meetings"
+
+# Filename format (uses Python strftime + meeting title)
+# {date} = 2026-04-06, {time} = 1000, {title} = meeting-title-slugified
+filename_format = "{date}-{time}-{title}.md"
+
+[sync]
+# Set to true once rclone is configured
+enabled = false
+
+# Your rclone remote name + SharePoint path
+# Example: "sharepoint:Documents/Meetings"
+# Run `rclone config` to set up the remote
+rclone_remote = "sharepoint:Documents/Meetings"
+
+# Sync on file save (true) or on a schedule (false)
+sync_on_save = true
+
+[app]
+# Minutes of silence before auto-stopping recording
+silence_timeout_minutes = 5
+
+# Show a desktop notification when sync completes
+notify_on_sync = true
