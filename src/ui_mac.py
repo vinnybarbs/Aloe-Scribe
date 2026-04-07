@@ -448,16 +448,20 @@ class AloeScribeWindow(QMainWindow):
 
     def _on_start(self, meeting):
         self._signals.set_recording.emit(meeting)
-        self.on_start_recording(meeting)
+        import threading
+        threading.Thread(target=self.on_start_recording, args=(meeting,), daemon=True).start()
 
     def _on_manual_start(self):
-        from calendar_watcher import Meeting
-        manual = Meeting(
-            title="Manual Recording",
-            start=datetime.now().astimezone(),
-            end=datetime.now().astimezone(),
-        )
-        self._on_start(manual)
+        try:
+            from calendar_watcher import Meeting
+            manual = Meeting(
+                title="Manual Recording",
+                start=datetime.now().astimezone(),
+                end=datetime.now().astimezone(),
+            )
+            self._on_start(manual)
+        except Exception as e:
+            log.error(f"Failed to start manual recording: {e}")
 
     def _on_stop(self):
         self._signals.set_processing.emit()
