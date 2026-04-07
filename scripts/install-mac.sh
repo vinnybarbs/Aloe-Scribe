@@ -51,12 +51,16 @@ fi
 # 4. Python venv + dependencies
 # -----------------------------------------------------------
 echo -e "${GREEN}[4/7]${NC} Setting up Python environment..."
+# Always recreate venv to avoid stale cached builds
+rm -rf "$VENV_DIR"
 # Use Homebrew's python3.12 for the venv (has tomllib built-in)
 BREW_PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
 if [ -x "$BREW_PYTHON" ]; then
     "$BREW_PYTHON" -m venv "$VENV_DIR"
+    echo "  Using Python 3.12 from Homebrew"
 else
     python3 -m venv "$VENV_DIR"
+    echo "  Using system python3"
 fi
 "$VENV_DIR/bin/pip" install --upgrade pip -q
 "$VENV_DIR/bin/pip" install -q \
@@ -114,8 +118,10 @@ echo -e "${GREEN}[7/7]${NC} Building Aloe Scribe.app..."
 
 cd "$PROJECT_DIR"
 
-# Clean previous builds
-rm -rf build dist
+# Clean ALL previous builds and caches
+rm -rf build dist *.egg-info .eggs
+rm -rf /Applications/Aloe\ Scribe.app
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 # Generate .icns icon from PNG
 ICON_SRC="$PROJECT_DIR/assets/icon.png"
@@ -133,8 +139,8 @@ if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null && [ ! -f "$ICNS_OUT" ]; th
     rm -rf "$ICONSET"
 fi
 
-# Update setup.py to use .icns if it exists
-if [ -f "$ICNS_OUT" ]; then
+# Update setup.py to use .icns if it exists (only if not already set)
+if [ -f "$ICNS_OUT" ] && ! grep -q "iconfile" "$PROJECT_DIR/setup.py"; then
     sed -i '' 's|"argv_emulation": False,|"argv_emulation": False, "iconfile": "assets/AppIcon.icns",|' "$PROJECT_DIR/setup.py"
 fi
 
