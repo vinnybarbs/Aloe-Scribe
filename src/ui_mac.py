@@ -447,9 +447,10 @@ class AloeScribeWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _on_start(self, meeting):
+        log.info(f"UI: starting recording for '{meeting.title}'")
         self._signals.set_recording.emit(meeting)
-        import threading
-        threading.Thread(target=self.on_start_recording, args=(meeting,), daemon=True).start()
+        # Start recording — this is fast (just spawns ffmpeg), safe on main thread
+        self.on_start_recording(meeting)
 
     def _on_manual_start(self):
         try:
@@ -459,9 +460,12 @@ class AloeScribeWindow(QMainWindow):
                 start=datetime.now().astimezone(),
                 end=datetime.now().astimezone(),
             )
+            log.info("UI: manual start clicked")
             self._on_start(manual)
         except Exception as e:
             log.error(f"Failed to start manual recording: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _on_stop(self):
         self._signals.set_processing.emit()
