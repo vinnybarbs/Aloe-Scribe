@@ -197,6 +197,8 @@ class AloeScribeWindow(QMainWindow):
         self._current_meeting = None
         self._state = "idle"
         self._timer_seconds = 0
+        self._processing_seconds = 0
+        self._processing_timer = None
 
         # Signals for thread-safe updates
         self._signals = _Signals()
@@ -284,6 +286,7 @@ class AloeScribeWindow(QMainWindow):
     def _render_idle(self):
         self._state = "idle"
         self._timer.stop()
+        self._stop_processing_timer()
         self._clear_content()
 
         label = QLabel("No meetings detected.")
@@ -371,28 +374,47 @@ class AloeScribeWindow(QMainWindow):
     def _render_processing(self):
         self._state = "processing"
         self._timer.stop()
+        self._stop_processing_timer()
         self._clear_content()
 
-        state = QLabel("TRANSCRIBING")
-        state.setObjectName("stateLabel")
-        state.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._content_layout.addWidget(state)
+        stopped = QLabel("RECORDING STOPPED")
+        stopped.setObjectName("stateLabel")
+        stopped.setStyleSheet("color: #3A8C5A;")
+        stopped.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._content_layout.addWidget(stopped)
 
-        label = QLabel("Running Whisper locally...")
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._content_layout.addWidget(sep)
+
+        label = QLabel("Transcribing audio...")
         label.setObjectName("meetingTime")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(label)
 
-        # Simple animated dots via timer
-        self._dots_label = QLabel("...")
-        self._dots_label.setObjectName("stateLabel")
-        self._dots_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._content_layout.addWidget(self._dots_label)
+        hint = QLabel("Long recordings may take several minutes.")
+        hint.setObjectName("stateLabel")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._content_layout.addWidget(hint)
+
+        self._processing_timer_label = QLabel("00:00")
+        self._processing_timer_label.setObjectName("timer")
+        self._processing_timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._content_layout.addWidget(self._processing_timer_label)
 
         self._update_status("● PROCESSING", "statusProcess")
 
+        # Start a processing elapsed timer so the user can see it's alive
+        self._processing_seconds = 0
+        self._processing_timer = QTimer(self)
+        self._processing_timer.setInterval(1000)
+        self._processing_timer.timeout.connect(self._tick_processing_timer)
+        self._processing_timer.start()
+
     def _render_done(self, output_path):
         self._state = "done"
+        self._stop_processing_timer()
         self._clear_content()
 
         state = QLabel("COMPLETE")
@@ -492,6 +514,18 @@ class AloeScribeWindow(QMainWindow):
         s = self._timer_seconds % 60
         if hasattr(self, "_timer_label"):
             self._timer_label.setText(f"{m:02d}:{s:02d}")
+
+    def _tick_processing_timer(self):
+        self._processing_seconds += 1
+        m = self._processing_seconds // 60
+        s = self._processing_seconds % 60
+        if hasattr(self, "_processing_timer_label"):
+            self._processing_timer_label.setText(f"{m:02d}:{s:02d}")
+
+    def _stop_processing_timer(self):
+        if self._processing_timer:
+            self._processing_timer.stop()
+            self._processing_timer = None
 
     def _update_status(self, text: str, object_name: str):
         self._status_label.setText(text)

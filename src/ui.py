@@ -77,6 +77,8 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._state = "idle"
         self._timer_seconds = 0
         self._timer_id = None
+        self._processing_seconds = 0
+        self._processing_timer_id = None
 
         # Set the window/dock icon to the aloe leaf
         _ensure_tray_icons()
@@ -375,23 +377,45 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._state = "processing"
         self._clear_content()
 
-        state = Gtk.Label(label="TRANSCRIBING")
-        state.get_style_context().add_class("state-label")
-        self._content.pack_start(state, False, False, 0)
+        stopped = Gtk.Label(label="RECORDING STOPPED")
+        stopped.get_style_context().add_class("state-label")
+        stopped.get_style_context().add_class("status-done")
+        self._content.pack_start(stopped, False, False, 0)
 
-        label = Gtk.Label(label="Running Whisper locally...")
+        sep = Gtk.Separator()
+        sep.set_margin_top(8)
+        sep.set_margin_bottom(8)
+        self._content.pack_start(sep, False, False, 0)
+
+        label = Gtk.Label(label="Transcribing audio...")
         label.get_style_context().add_class("meeting-time")
-        label.set_margin_top(8)
         self._content.pack_start(label, False, False, 0)
 
+        hint = Gtk.Label(label="Long recordings may take several minutes.")
+        hint.get_style_context().add_class("state-label")
+        hint.set_margin_top(2)
+        self._content.pack_start(hint, False, False, 0)
+
+        spinner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        spinner_box.set_halign(Gtk.Align.CENTER)
+        spinner_box.set_margin_top(12)
         spinner = Gtk.Spinner()
-        spinner.set_size_request(32, 32)
-        spinner.set_margin_top(12)
+        spinner.set_size_request(24, 24)
         spinner.start()
-        self._content.pack_start(spinner, False, False, 0)
+        spinner_box.pack_start(spinner, False, False, 0)
+
+        self._processing_timer_label = Gtk.Label(label="00:00")
+        self._processing_timer_label.get_style_context().add_class("timer")
+        spinner_box.pack_start(self._processing_timer_label, False, False, 0)
+
+        self._content.pack_start(spinner_box, False, False, 0)
 
         self._update_status("● PROCESSING", "status-processing")
         self._content.show_all()
+
+        # Start a processing elapsed timer so the user can see it's alive
+        self._processing_seconds = 0
+        self._processing_timer_id = GLib.timeout_add(1000, self._tick_processing_timer)
 
     def _render_done(self, output_path: Path):
         self._state = "done"
@@ -443,10 +467,12 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         GLib.idle_add(self._render_processing)
 
     def set_done(self, output_path: Path):
+        self._stop_timer()
         GLib.idle_add(self._render_done, output_path)
         GLib.timeout_add_seconds(10, self.set_idle)
 
     def set_idle(self):
+        self._stop_timer()
         GLib.idle_add(self._render_idle)
         return False  # stop GLib timeout if called that way
 
@@ -510,6 +536,17 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         if self._timer_id:
             GLib.source_remove(self._timer_id)
             self._timer_id = None
+        if self._processing_timer_id:
+            GLib.source_remove(self._processing_timer_id)
+            self._processing_timer_id = None
+
+    def _tick_processing_timer(self):
+        self._processing_seconds += 1
+        m = self._processing_seconds // 60
+        s = self._processing_seconds % 60
+        if hasattr(self, "_processing_timer_label"):
+            self._processing_timer_label.set_text(f"{m:02d}:{s:02d}")
+        return True  # keep ticking
 
     def _update_status(self, text: str, css_class: str):
         ctx = self._status_label.get_style_context()
