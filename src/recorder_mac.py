@@ -121,6 +121,25 @@ def _resolve_device(config_value: str) -> Optional[str]:
     return None
 
 
+def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """
+    List available audio sources on macOS via avfoundation.
+    Returns (mic_sources, system_sources) as lists of (id, display_name).
+    Mic sources exclude virtual devices; system sources include them.
+    """
+    devices = _list_avfoundation_devices()
+    audio = devices.get("audio", [])
+    mics = []
+    system = []
+    for idx, name in audio:
+        device_id = name  # save by name for stability across reboots
+        if _is_virtual(name) or "blackhole" in name.lower():
+            system.append((device_id, name))
+        else:
+            mics.append((device_id, name))
+    return mics, system
+
+
 class Recorder:
     """
     Records mic + system audio into a single WAV file using ffmpeg on macOS.

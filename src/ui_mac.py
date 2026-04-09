@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
     QMenu,
     QFrame,
+    QComboBox,
 )
 
 def _setup_macos_app():
@@ -165,6 +166,17 @@ _STYLESHEET = """
         background-color: #eeeeee;
         max-height: 1px;
     }
+    QLabel#deviceLabel {
+        font-size: 10px;
+        color: #888888;
+        letter-spacing: 1px;
+    }
+    QComboBox {
+        font-size: 11px;
+        padding: 4px 8px;
+        border: 1px solid #cccccc;
+        border-radius: 4px;
+    }
 """
 
 
@@ -188,11 +200,19 @@ class AloeScribeWindow(QMainWindow):
         on_start_recording: Callable,
         on_stop_recording: Callable,
         on_quit: Callable,
+        list_sources: Callable = None,
+        on_device_change: Callable = None,
+        current_mic: str = "",
+        current_system: str = "",
     ):
         super().__init__()
         self.on_start_recording = on_start_recording
         self.on_stop_recording = on_stop_recording
         self.on_quit = on_quit
+        self._list_sources = list_sources
+        self._on_device_change = on_device_change
+        self._selected_mic = current_mic
+        self._selected_system = current_system
 
         self._current_meeting = None
         self._state = "idle"
@@ -215,7 +235,7 @@ class AloeScribeWindow(QMainWindow):
 
         # Window setup
         self.setWindowTitle("Aloe Scribe")
-        self.setFixedSize(300, 200)
+        self.setFixedSize(300, 310)
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.WindowCloseButtonHint
@@ -299,12 +319,75 @@ class AloeScribeWindow(QMainWindow):
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(sub)
 
+        # Audio device dropdowns
+        if self._list_sources:
+            self._build_device_dropdowns()
+
         btn = QPushButton("Start Recording Now")
         btn.setObjectName("btnStart")
         btn.clicked.connect(self._on_manual_start)
         self._content_layout.addWidget(btn)
 
         self._update_status("● IDLE", "statusIdle")
+
+    def _build_device_dropdowns(self):
+        """Add mic and speaker/system audio dropdowns to the idle view."""
+        try:
+            mics, systems = self._list_sources()
+        except Exception as e:
+            log.warning(f"Could not list audio devices: {e}")
+            return
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._content_layout.addWidget(sep)
+
+        # Mic dropdown
+        mic_label = QLabel("MICROPHONE")
+        mic_label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(mic_label)
+
+        mic_combo = QComboBox()
+        mic_combo.addItem("Auto-detect", "")
+        active_mic_idx = 0
+        for i, (dev_id, display) in enumerate(mics):
+            mic_combo.addItem(display, dev_id)
+            if dev_id == self._selected_mic:
+                active_mic_idx = i + 1
+        mic_combo.setCurrentIndex(active_mic_idx)
+        mic_combo.currentIndexChanged.connect(
+            lambda idx, c=mic_combo: self._on_mic_changed(c)
+        )
+        self._content_layout.addWidget(mic_combo)
+
+        # System audio dropdown
+        sys_label = QLabel("SPEAKER / SYSTEM AUDIO")
+        sys_label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(sys_label)
+
+        sys_combo = QComboBox()
+        sys_combo.addItem("Auto-detect", "")
+        active_sys_idx = 0
+        for i, (dev_id, display) in enumerate(systems):
+            sys_combo.addItem(display, dev_id)
+            if dev_id == self._selected_system:
+                active_sys_idx = i + 1
+        sys_combo.setCurrentIndex(active_sys_idx)
+        sys_combo.currentIndexChanged.connect(
+            lambda idx, c=sys_combo: self._on_sys_changed(c)
+        )
+        self._content_layout.addWidget(sys_combo)
+
+    def _on_mic_changed(self, combo):
+        self._selected_mic = combo.currentData() or ""
+        if self._on_device_change:
+            self._on_device_change(self._selected_mic, self._selected_system)
+
+    def _on_sys_changed(self, combo):
+        self._selected_system = combo.currentData() or ""
+        if self._on_device_change:
+            self._on_device_change(self._selected_mic, self._selected_system)
 
     def _render_notify(self, meeting):
         self._state = "notifying"
@@ -552,10 +635,16 @@ class AloeScribeApp:
     - Single-instance via QLocalServer
     """
 
-    def __init__(self, on_start_recording, on_stop_recording, on_quit):
+    def __init__(self, on_start_recording, on_stop_recording, on_quit,
+                 list_sources=None, on_device_change=None,
+                 current_mic="", current_system=""):
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording
         self._on_quit = on_quit
+        self._list_sources = list_sources
+        self._on_device_change = on_device_change
+        self._current_mic = current_mic
+        self._current_system = current_system
         self._app: Optional[QApplication] = None
         self._window: Optional[AloeScribeWindow] = None
         self._tray: Optional[QSystemTrayIcon] = None
@@ -587,6 +676,10 @@ class AloeScribeApp:
             on_start_recording=self._on_start_recording,
             on_stop_recording=self._on_stop_recording,
             on_quit=self._on_quit,
+            list_sources=self._list_sources,
+            on_device_change=self._on_device_change,
+            current_mic=self._current_mic,
+            current_system=self._current_system,
         )
 
         # System tray

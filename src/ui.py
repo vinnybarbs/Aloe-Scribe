@@ -67,11 +67,19 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         on_start_recording: Callable,
         on_stop_recording: Callable,
         on_quit: Callable,
+        list_sources: Callable = None,
+        on_device_change: Callable = None,
+        current_mic: str = "",
+        current_system: str = "",
     ):
         super().__init__(application=application, title="Aloe Scribe")
         self.on_start_recording = on_start_recording
         self.on_stop_recording = on_stop_recording
         self.on_quit = on_quit
+        self._list_sources = list_sources
+        self._on_device_change = on_device_change
+        self._selected_mic = current_mic
+        self._selected_system = current_system
 
         self._current_meeting = None
         self._state = "idle"
@@ -93,7 +101,7 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self.set_wmclass("aloe-scribe", "Aloe Scribe")
 
         # Window setup
-        self.set_default_size(300, 200)
+        self.set_default_size(300, 310)
         self.set_resizable(False)
         self.set_keep_above(True)
         self.set_border_width(20)
@@ -166,6 +174,11 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
             .status-processing { color: #3878C8; }
             .status-done { color: #3A8C5A; }
             separator { background-color: #eeeeee; margin-top: 10px; margin-bottom: 10px; }
+            .device-label {
+                font-size: 10px;
+                color: #888888;
+                letter-spacing: 1px;
+            }
         """
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(css)
@@ -292,22 +305,84 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._clear_content()
         label = Gtk.Label(label="No meetings detected.")
         label.get_style_context().add_class("meeting-time")
-        label.set_margin_top(16)
+        label.set_margin_top(8)
         self._content.pack_start(label, False, False, 0)
 
         sub = Gtk.Label(label="Watching your calendar...")
         sub.get_style_context().add_class("state-label")
         self._content.pack_start(sub, False, False, 0)
 
+        # Audio device dropdowns
+        if self._list_sources:
+            self._build_device_dropdowns()
+
         # Manual start button
         btn = Gtk.Button(label="Start Recording Now")
         btn.get_style_context().add_class("btn-start")
-        btn.set_margin_top(16)
+        btn.set_margin_top(8)
         btn.connect("clicked", self._on_manual_start)
         self._content.pack_start(btn, False, False, 0)
 
         self._update_status("● IDLE", "status-idle")
         self._content.show_all()
+
+    def _build_device_dropdowns(self):
+        """Add mic and speaker/system audio dropdowns to the idle view."""
+        try:
+            mics, systems = self._list_sources()
+        except Exception as e:
+            log.warning(f"Could not list audio devices: {e}")
+            return
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(4)
+        sep.set_margin_bottom(4)
+        self._content.pack_start(sep, False, False, 0)
+
+        # Mic dropdown
+        mic_label = Gtk.Label(label="MICROPHONE")
+        mic_label.get_style_context().add_class("device-label")
+        mic_label.set_halign(Gtk.Align.START)
+        self._content.pack_start(mic_label, False, False, 0)
+
+        mic_combo = Gtk.ComboBoxText()
+        mic_combo.append("", "Auto-detect")
+        active_mic_idx = 0
+        for i, (dev_id, display) in enumerate(mics):
+            mic_combo.append(dev_id, display)
+            if dev_id == self._selected_mic:
+                active_mic_idx = i + 1
+        mic_combo.set_active(active_mic_idx)
+        mic_combo.connect("changed", self._on_mic_changed)
+        self._content.pack_start(mic_combo, False, False, 0)
+
+        # System audio dropdown
+        sys_label = Gtk.Label(label="SPEAKER / SYSTEM AUDIO")
+        sys_label.get_style_context().add_class("device-label")
+        sys_label.set_halign(Gtk.Align.START)
+        sys_label.set_margin_top(4)
+        self._content.pack_start(sys_label, False, False, 0)
+
+        sys_combo = Gtk.ComboBoxText()
+        sys_combo.append("", "Auto-detect")
+        active_sys_idx = 0
+        for i, (dev_id, display) in enumerate(systems):
+            sys_combo.append(dev_id, display)
+            if dev_id == self._selected_system:
+                active_sys_idx = i + 1
+        sys_combo.set_active(active_sys_idx)
+        sys_combo.connect("changed", self._on_sys_changed)
+        self._content.pack_start(sys_combo, False, False, 0)
+
+    def _on_mic_changed(self, combo):
+        self._selected_mic = combo.get_active_id() or ""
+        if self._on_device_change:
+            self._on_device_change(self._selected_mic, self._selected_system)
+
+    def _on_sys_changed(self, combo):
+        self._selected_system = combo.get_active_id() or ""
+        if self._on_device_change:
+            self._on_device_change(self._selected_mic, self._selected_system)
 
     def _render_notify(self, meeting):
         self._state = "notifying"
@@ -577,11 +652,17 @@ class AloeScribeApp(Gtk.Application):
     - Only one instance runs per session (application_id uniqueness)
     """
 
-    def __init__(self, on_start_recording, on_stop_recording, on_quit):
+    def __init__(self, on_start_recording, on_stop_recording, on_quit,
+                 list_sources=None, on_device_change=None,
+                 current_mic="", current_system=""):
         super().__init__(application_id="com.aloescribe.app")
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording
         self._on_quit = on_quit
+        self._list_sources = list_sources
+        self._on_device_change = on_device_change
+        self._current_mic = current_mic
+        self._current_system = current_system
         self._window = None
 
     def do_activate(self):
@@ -592,6 +673,10 @@ class AloeScribeApp(Gtk.Application):
                 on_start_recording=self._on_start_recording,
                 on_stop_recording=self._on_stop_recording,
                 on_quit=self._on_quit,
+                list_sources=self._list_sources,
+                on_device_change=self._on_device_change,
+                current_mic=self._current_mic,
+                current_system=self._current_system,
             )
             self._window._app = self
         else:

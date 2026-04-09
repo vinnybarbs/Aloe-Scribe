@@ -59,10 +59,10 @@ from syncer import Syncer
 
 if sys.platform == "darwin":
     from ui_mac import AloeScribeApp
-    from recorder_mac import Recorder
+    from recorder_mac import Recorder, list_sources
 else:
     from ui import AloeScribeApp
-    from recorder import Recorder
+    from recorder import Recorder, list_sources
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +110,10 @@ class AloeScribe:
             on_start_recording=self._start_recording,
             on_stop_recording=self._stop_and_transcribe,
             on_quit=self._quit,
+            list_sources=list_sources,
+            on_device_change=self._on_device_change,
+            current_mic=config["audio"].get("mic_source", ""),
+            current_system=config["audio"].get("system_source", ""),
         )
 
         ical_url = config["calendar"]["ical_url"]
@@ -147,6 +151,31 @@ class AloeScribe:
         if self.watcher:
             self.watcher.stop()
         self.syncer.stop()
+
+    # ------------------------------------------------------------------ #
+    # Device selection                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _on_device_change(self, mic_source: str, system_source: str):
+        """Called by UI when user selects a different audio device."""
+        self.recorder._mic_config = mic_source
+        self.recorder._sys_config = system_source
+        log.info(f"Device selection updated — mic: {mic_source or '(auto)'}, system: {system_source or '(auto)'}")
+
+        # Persist to config.toml
+        import re
+        config_text = CONFIG_PATH.read_text()
+        config_text = re.sub(
+            r'mic_source\s*=\s*"[^"]*"',
+            f'mic_source = "{mic_source}"',
+            config_text,
+        )
+        config_text = re.sub(
+            r'system_source\s*=\s*"[^"]*"',
+            f'system_source = "{system_source}"',
+            config_text,
+        )
+        CONFIG_PATH.write_text(config_text)
 
     # ------------------------------------------------------------------ #
     # Calendar callbacks                                                   #

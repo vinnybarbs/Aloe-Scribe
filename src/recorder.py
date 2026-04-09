@@ -81,6 +81,69 @@ def _find_default_mic() -> str:
     return "default"
 
 
+def _friendly_name(source_id: str) -> str:
+    """Turn a PulseAudio source ID into a readable display name."""
+    name = source_id
+    is_monitor = ".monitor" in name
+    # Strip common prefixes
+    for prefix in ("alsa_input.", "alsa_output."):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    # Remove .monitor suffix for display
+    name = name.replace(".monitor", "")
+    # Extract recognizable brand/model keywords from USB device names
+    parts = name.split("-")
+    # USB devices typically: usb-{vendor}_{product}_{serial}-{endpoint}.{profile}
+    if len(parts) >= 2 and parts[0] == "usb":
+        device_part = parts[1] if len(parts) > 1 else ""
+        words = device_part.split("_")
+        # Filter out hex IDs (4-char vendor codes) and serial numbers (long hex)
+        words = [w for w in words if not (len(w) >= 4 and all(c in "0123456789ABCDEFabcdef" for c in w))]
+        if words:
+            return " ".join(words)
+    # PCI devices: pci-{addr}.{profile}
+    if parts[0] == "pci":
+        # Get the profile info from the source_id (after the last hyphen section)
+        # e.g. "pci-0000_c6_00.6.analog-stereo" → "analog stereo"
+        profile_part = source_id.split(".")
+        # Find profile keywords
+        profiles = []
+        for p in profile_part:
+            p_clean = p.replace("monitor", "").strip("-. ")
+            if p_clean in ("analog", "hdmi"):
+                profiles.append(p_clean.upper())
+            elif "stereo" in p_clean or "surround" in p_clean:
+                profiles.append(p_clean)
+        profile = " ".join(profiles) if profiles else "Audio"
+        return f"Built-in {profile}"
+    return name.replace(".", " ").replace("_", " ").replace("-", " ")
+
+
+def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """
+    List available audio sources on PulseAudio/PipeWire.
+    Returns (mic_sources, system_sources) as lists of (id, display_name).
+    """
+    mics = []
+    monitors = []
+    try:
+        out = subprocess.check_output(
+            ["pactl", "list", "short", "sources"], text=True
+        )
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                source_id = parts[1]
+                display = _friendly_name(source_id)
+                if ".monitor" in source_id:
+                    monitors.append((source_id, display))
+                else:
+                    mics.append((source_id, display))
+    except Exception as e:
+        log.warning(f"Could not list sources: {e}")
+    return mics, monitors
+
+
 class Recorder:
     """
     Records mic + system audio into a single WAV file using ffmpeg.
