@@ -125,7 +125,8 @@ def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """
     List available audio sources on macOS via avfoundation.
     Returns (mic_sources, system_sources) as lists of (id, display_name).
-    Mic sources exclude virtual devices; system sources include them.
+    Only shows BlackHole for system audio — Teams/Zoom virtual devices are hidden
+    since they only capture that app's audio, not full system output.
     """
     devices = _list_avfoundation_devices()
     audio = devices.get("audio", [])
@@ -133,8 +134,11 @@ def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     system = []
     for idx, name in audio:
         device_id = name  # save by name for stability across reboots
-        if _is_virtual(name) or "blackhole" in name.lower():
-            system.append((device_id, name))
+        if "blackhole" in name.lower():
+            system.append((device_id, f"{name} (System Audio)"))
+        elif _is_virtual(name):
+            # Skip Teams/Zoom virtual devices — not useful for system capture
+            continue
         else:
             mics.append((device_id, name))
     return mics, system
