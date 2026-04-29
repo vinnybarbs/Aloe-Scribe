@@ -17,6 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
+from audio_meter import AudioMeter
+from recorder import _find_default_mic, _find_monitor_source
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -88,6 +91,10 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._processing_seconds = 0
         self._processing_timer_id = None
         self._quit_after_transcribe = False
+        self._mic_meter: Optional[AudioMeter] = None
+        self._sys_meter: Optional[AudioMeter] = None
+        self._mic_level_bar: Optional[Gtk.LevelBar] = None
+        self._sys_level_bar: Optional[Gtk.LevelBar] = None
 
         # Set the window/dock icon to the aloe leaf
         _ensure_tray_icons()
@@ -102,11 +109,14 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self.set_wmclass("aloe-scribe", "Aloe Scribe")
 
         # Window setup
-        self.set_default_size(300, 310)
+        self.set_default_size(300, 420)
         self.set_resizable(False)
         self.set_keep_above(True)
         self.set_border_width(20)
         self.connect("delete-event", self._on_close)
+        # Stop audio meters when the window is hidden to save CPU
+        self.connect("map-event", lambda *_: self._on_window_mapped())
+        self.connect("unmap-event", lambda *_: self._on_window_unmapped())
 
         # Load CSS
         css = b"""
@@ -179,6 +189,28 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
                 font-size: 10px;
                 color: #888888;
                 letter-spacing: 1px;
+            }
+            levelbar trough {
+                min-height: 6px;
+                border-radius: 3px;
+                background-color: #eeeeee;
+                border: none;
+            }
+            levelbar block.filled,
+            levelbar block.high,
+            levelbar block.low {
+                background-color: #3A8C5A;
+                border-radius: 3px;
+                border: none;
+            }
+            levelbar block.full {
+                background-color: #C94040;
+                border-radius: 3px;
+                border: none;
+            }
+            levelbar block.empty {
+                background-color: transparent;
+                border: none;
             }
         """
         style_provider = Gtk.CssProvider()
@@ -293,8 +325,112 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._render_idle()
 
     def _clear_content(self):
+        # Stop meters before destroying their bar widgets
+        self._stop_meters()
+        self._mic_level_bar = None
+        self._sys_level_bar = None
         for child in self._content.get_children():
             self._content.remove(child)
+
+    # ------------------------------------------------------------------ #
+    # Audio meters                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _build_level_bars(self):
+        """Add 'MIC' and 'SYSTEM' level bars to the current content area."""
+        sep = Gtk.Separator()
+        sep.set_margin_top(4)
+        sep.set_margin_bottom(2)
+        self._content.pack_start(sep, False, False, 0)
+
+        mic_label = Gtk.Label(label="MIC LEVEL")
+        mic_label.get_style_context().add_class("device-label")
+        mic_label.set_halign(Gtk.Align.START)
+        self._content.pack_start(mic_label, False, False, 0)
+
+        self._mic_level_bar = Gtk.LevelBar.new_for_interval(0.0, 1.0)
+        self._mic_level_bar.add_offset_value("full", 0.85)
+        self._mic_level_bar.set_value(0.0)
+        self._content.pack_start(self._mic_level_bar, False, False, 0)
+
+        sys_label = Gtk.Label(label="SYSTEM AUDIO LEVEL")
+        sys_label.get_style_context().add_class("device-label")
+        sys_label.set_halign(Gtk.Align.START)
+        sys_label.set_margin_top(4)
+        self._content.pack_start(sys_label, False, False, 0)
+
+        self._sys_level_bar = Gtk.LevelBar.new_for_interval(0.0, 1.0)
+        self._sys_level_bar.add_offset_value("full", 0.85)
+        self._sys_level_bar.set_value(0.0)
+        self._content.pack_start(self._sys_level_bar, False, False, 0)
+
+    def _start_meters(self):
+        """Spawn parec readers for current mic + system sources."""
+        # Don't burn CPU when the window isn't on screen
+        try:
+            if not self.get_mapped():
+                return
+        except Exception:
+            pass
+        self._stop_meters()
+        mic_src = self._selected_mic or _find_default_mic()
+        sys_src = self._selected_system or (_find_monitor_source() or "")
+
+        if mic_src:
+            self._mic_meter = AudioMeter(
+                mic_src,
+                lambda lvl: GLib.idle_add(self._update_mic_level, lvl),
+            )
+            if not self._mic_meter.start():
+                self._mic_meter = None
+
+        if sys_src:
+            self._sys_meter = AudioMeter(
+                sys_src,
+                lambda lvl: GLib.idle_add(self._update_sys_level, lvl),
+            )
+            if not self._sys_meter.start():
+                self._sys_meter = None
+
+    def _stop_meters(self):
+        for attr in ("_mic_meter", "_sys_meter"):
+            meter = getattr(self, attr, None)
+            if meter is not None:
+                try:
+                    meter.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+    def _restart_meters_if_active(self):
+        """If meters are currently running, restart with the new selection."""
+        if self._mic_meter is not None or self._sys_meter is not None:
+            self._start_meters()
+
+    def _on_window_mapped(self):
+        if self._state in ("idle", "recording") and self._mic_level_bar is not None:
+            self._start_meters()
+
+    def _on_window_unmapped(self):
+        self._stop_meters()
+
+    def _update_mic_level(self, level: float):
+        bar = self._mic_level_bar
+        if bar is not None:
+            try:
+                bar.set_value(min(1.0, max(0.0, level)))
+            except Exception:
+                pass
+        return False
+
+    def _update_sys_level(self, level: float):
+        bar = self._sys_level_bar
+        if bar is not None:
+            try:
+                bar.set_value(min(1.0, max(0.0, level)))
+            except Exception:
+                pass
+        return False
 
     # ------------------------------------------------------------------ #
     # State renderers                                                       #
@@ -316,6 +452,9 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         if self._list_sources:
             self._build_device_dropdowns()
 
+        # Live level meters so the user can verify audio is flowing
+        self._build_level_bars()
+
         # Manual start button
         btn = Gtk.Button(label="Start Recording Now")
         btn.get_style_context().add_class("btn-start")
@@ -325,6 +464,7 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
 
         self._update_status("● IDLE", "status-idle")
         self._content.show_all()
+        self._start_meters()
 
     def _build_device_dropdowns(self):
         """Add mic and speaker/system audio dropdowns to the idle view."""
@@ -378,11 +518,13 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._selected_mic = combo.get_active_id() or ""
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
+        self._restart_meters_if_active()
 
     def _on_sys_changed(self, combo):
         self._selected_system = combo.get_active_id() or ""
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
+        self._restart_meters_if_active()
 
     def _render_recording(self, meeting):
         self._state = "recording"
@@ -401,6 +543,9 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._timer_label.set_margin_top(8)
         self._content.pack_start(self._timer_label, False, False, 0)
 
+        # Live level meters so the user can verify audio is flowing
+        self._build_level_bars()
+
         stop = Gtk.Button(label="Stop & Transcribe")
         stop.get_style_context().add_class("btn-stop")
         stop.set_margin_top(12)
@@ -410,6 +555,7 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._update_status("● RECORDING", "status-recording")
         self._start_timer()
         self._content.show_all()
+        self._start_meters()
 
     def _render_processing(self):
         self._state = "processing"
