@@ -66,6 +66,26 @@ systemctl --user stop aloe-scribe
 journalctl --user -u aloe-scribe -f
 ```
 
+## Whisper model
+
+The default config points at the `large-v3-turbo` model (~1.6 GB). Download it once with:
+
+```bash
+cd ~/whisper.cpp
+bash models/download-ggml-model.sh large-v3-turbo
+```
+
+Tradeoffs (pure-CPU on a modern desktop):
+
+| Model | Size | Speed | Notes |
+|---|---|---|---|
+| `small` | 488 MB | ~16x realtime | Older default — fine for clear single speakers |
+| `medium.en` | ~1.4 GB | ~6x realtime | English-only, big jump on technical speech |
+| `large-v3-turbo` | ~1.6 GB | ~3–4x realtime | **Default** — near-large accuracy |
+| `large-v3` | ~3.1 GB | ~1.5–2x realtime | Best accuracy, biggest disk |
+
+After downloading, set `model` and `model_path` in `config/config.toml`. (On Linux, `config/config.toml` is git-tracked but flagged `assume-unchanged` so per-machine values stay local — pull updates from the README, then edit the file by hand.)
+
 ## Configuration
 
 Edit `config/config.toml`:
@@ -77,9 +97,11 @@ mic_source = ""
 system_source = ""
 
 [whisper]
-# Model: tiny, base, small, medium, large-v3
-# "small" is the best balance of speed and accuracy
-model = "small"
+# Model: tiny, base, small, medium, large-v3, large-v3-turbo
+# "large-v3-turbo" is the recommended default — near-large accuracy,
+# ~3-4x realtime on a modern CPU. Falls back to "small" on slower hardware.
+model = "large-v3-turbo"
+model_path = "~/whisper.cpp/models/ggml-large-v3-turbo.bin"
 
 [app]
 # Hard cap on recording length — auto-stops + transcribes after this many minutes
