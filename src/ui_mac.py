@@ -245,7 +245,7 @@ class AloeScribeWindow(QMainWindow):
 
         # Window setup
         self.setWindowTitle("Aloe Scribe")
-        self.setFixedSize(300, 310)
+        self.setFixedSize(300, 460)
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.WindowCloseButtonHint
