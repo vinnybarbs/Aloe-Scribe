@@ -17,7 +17,7 @@ DATA_FILES = [
 OPTIONS = {
     "argv_emulation": False,
     "includes": [
-        "calendar_watcher",
+        "meeting",
         "recorder_mac",
         "recorder",
         "transcriber",
@@ -29,9 +29,6 @@ OPTIONS = {
     ],
     "packages": [
         "PyQt6",
-        "icalendar",
-        "requests",
-        "certifi",
         "PIL",
         "objc",
         "AppKit",

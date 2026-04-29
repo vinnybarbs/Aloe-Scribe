@@ -1,7 +1,7 @@
 """
 main.py — Aloe Scribe entry point.
 
-Wires together the calendar watcher, recorder, transcriber, syncer, and tray icon.
+Wires together the recorder, transcriber, syncer, and tray icon.
 Run directly: python main.py
 Or install as a systemd service (see scripts/install.sh)
 """
@@ -12,6 +12,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # Ensure Homebrew paths are available when running from a .app bundle
 # (macOS strips PATH to just /usr/bin:/bin for bundled apps)
@@ -53,7 +54,7 @@ SRC = ROOT / "src"
 if SRC.exists():
     sys.path.insert(0, str(SRC))
 
-from calendar_watcher import CalendarWatcher, Meeting
+from meeting import Meeting
 from transcriber import Transcriber
 from syncer import Syncer
 
@@ -84,6 +85,10 @@ class AloeScribe:
         self.config = config
         self._recording_path: Path | None = None
         self._current_meeting: Meeting | None = None
+        self._max_duration_timer: Optional[threading.Timer] = None
+        self._max_duration_seconds = int(
+            config["app"].get("max_duration_minutes", 120) * 60
+        )
 
         # Resolve output dir
         self.output_dir = Path(config["output"]["local_dir"]).expanduser()
@@ -116,22 +121,6 @@ class AloeScribe:
             current_system=config["audio"].get("system_source", ""),
         )
 
-        ical_url = config["calendar"]["ical_url"]
-        if not ical_url:
-            log.warning(
-                "No iCal URL set in config.toml — calendar notifications disabled.\n"
-                "Set [calendar] ical_url to enable automatic meeting detection."
-            )
-            self.watcher = None
-        else:
-            self.watcher = CalendarWatcher(
-                ical_url=ical_url,
-                notify_minutes=config["calendar"]["notify_minutes_before"],
-                poll_interval_minutes=config["calendar"]["poll_interval_minutes"],
-                on_upcoming=self._on_meeting_upcoming,
-                on_ended=self._on_meeting_ended,
-            )
-
     # ------------------------------------------------------------------ #
     # Lifecycle                                                            #
     # ------------------------------------------------------------------ #
@@ -139,17 +128,19 @@ class AloeScribe:
     def run(self):
         log.info("Aloe Scribe starting...")
         self.syncer.start()
-        if self.watcher:
-            self.watcher.start()
         log.info("Running — look for the Aloe Scribe icon in your system tray")
         self.tray.run()  # blocks until quit
 
     def _quit(self):
         log.info("Shutting down...")
+        self._cancel_max_duration_timer()
         if self.recorder.is_recording():
-            self.recorder.stop()
-        if self.watcher:
-            self.watcher.stop()
+            wav_path = self.recorder.stop()
+            if wav_path:
+                log.warning(
+                    f"Recording was in progress at shutdown — WAV saved but NOT transcribed. "
+                    f"Recover with: python3 scripts/transcribe_wav.py {wav_path}"
+                )
         self.syncer.stop()
 
     # ------------------------------------------------------------------ #
@@ -178,20 +169,6 @@ class AloeScribe:
         CONFIG_PATH.write_text(config_text)
 
     # ------------------------------------------------------------------ #
-    # Calendar callbacks                                                   #
-    # ------------------------------------------------------------------ #
-
-    def _on_meeting_upcoming(self, meeting: Meeting):
-        """Show the Start/Skip prompt in the tray."""
-        self.tray.notify_upcoming(meeting)
-
-    def _on_meeting_ended(self, meeting: Meeting):
-        """Auto-stop if still recording when the meeting ends."""
-        if self.recorder.is_recording():
-            log.info(f"Meeting ended — auto-stopping recording: {meeting.title}")
-            self._stop_and_transcribe()
-
-    # ------------------------------------------------------------------ #
     # Recording + transcription                                            #
     # ------------------------------------------------------------------ #
 
@@ -205,13 +182,37 @@ class AloeScribe:
 
         ok = self.recorder.start(self._recording_path)
         if ok:
-            log.info(f"Recording started: {self._recording_path.name}")
+            cap_min = self._max_duration_seconds // 60
+            log.info(
+                f"Recording started: {self._recording_path.name} (auto-stop in {cap_min} min)"
+            )
+            self._max_duration_timer = threading.Timer(
+                self._max_duration_seconds, self._auto_stop
+            )
+            self._max_duration_timer.daemon = True
+            self._max_duration_timer.start()
         else:
             log.error("Failed to start recording")
             self.tray.set_idle()
 
+    def _auto_stop(self):
+        """Fired by the duration timer — safety net so a forgotten recording doesn't run forever."""
+        if not self.recorder.is_recording():
+            return
+        log.warning(
+            f"Recording hit the {self._max_duration_seconds // 60}-min cap — auto-stopping"
+        )
+        self.tray.set_processing()
+        self._stop_and_transcribe()
+
+    def _cancel_max_duration_timer(self):
+        if self._max_duration_timer:
+            self._max_duration_timer.cancel()
+            self._max_duration_timer = None
+
     def _stop_and_transcribe(self):
         """Stop the recorder, transcribe, sync — all on a background thread."""
+        self._cancel_max_duration_timer()
         wav_path = self.recorder.stop()
         if not wav_path:
             self.tray.set_idle()

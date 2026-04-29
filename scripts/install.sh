@@ -39,12 +39,7 @@ VENV_DIR="$SCRIPT_DIR/../.venv"
 python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
-pip install --quiet \
-    pystray \
-    pillow \
-    icalendar \
-    requests \
-    tomli
+pip install --quiet pillow tomli
 
 echo -e "${GREEN}✓ Python packages installed in .venv${RESET}"
 

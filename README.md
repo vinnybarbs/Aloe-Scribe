@@ -5,14 +5,19 @@ Records mic + system audio, transcribes with Whisper, saves Markdown transcripts
 
 ## How it works
 
-1. Aloe Scribe watches your calendar via an iCal URL
-2. 4 minutes before a meeting, a notification prompts: **Start recording / Skip**
-3. You click Start — it records silently in the background
-4. When the meeting ends (or you click Stop), Whisper transcribes locally
-5. The Markdown transcript saves to `~/meetings/`
-6. Optionally syncs to SharePoint via rclone
+1. Open the Aloe Scribe window and click **Start Recording Now**
+2. It records silently in the background (mic + system audio mixed)
+3. Click **Stop & Transcribe** — Whisper runs locally
+4. The Markdown transcript saves to `~/meetings/`
+5. Optionally syncs to SharePoint via rclone
 
-You can also click **Start Recording Now** at any time for manual recordings.
+Recordings auto-stop after the `max_duration_minutes` cap (default 120) so a forgotten session can't run forever.
+
+If the app crashes mid-call and leaves an orphan `.wav` behind, recover it with:
+
+```bash
+python3 scripts/transcribe_wav.py ~/meetings/2026-04-17-1127-busy.wav
+```
 
 ## Install — macOS
 
@@ -66,10 +71,6 @@ journalctl --user -u aloe-scribe -f
 Edit `config/config.toml`:
 
 ```toml
-[calendar]
-# Paste your iCal URL here (see below for how to get it)
-ical_url = ""
-
 [audio]
 # Leave blank to auto-detect (recommended)
 mic_source = ""
@@ -79,15 +80,11 @@ system_source = ""
 # Model: tiny, base, small, medium, large-v3
 # "small" is the best balance of speed and accuracy
 model = "small"
+
+[app]
+# Hard cap on recording length — auto-stops + transcribes after this many minutes
+max_duration_minutes = 120
 ```
-
-### Getting your iCal URL
-
-**Google Calendar:**
-Settings > [your calendar] > Integrate calendar > *Secret address in iCal format*
-
-**Outlook / Microsoft 365:**
-Settings > View all Outlook settings > Calendar > Shared calendars > Publish > copy the ICS link
 
 ## Health check
 
@@ -158,12 +155,13 @@ aloe-scribe/
 │   ├── recorder.py            # Linux audio (PulseAudio)
 │   ├── recorder_mac.py        # macOS audio (avfoundation)
 │   ├── transcriber.py         # whisper.cpp wrapper
-│   ├── calendar_watcher.py    # iCal polling
+│   ├── meeting.py             # tiny dataclass for recording label
 │   ├── syncer.py              # rclone SharePoint sync
 │   └── notifications.py       # cross-platform notifications
 ├── scripts/
 │   ├── install.sh             # Linux installer
 │   ├── install-mac.sh         # macOS installer (builds .app)
+│   ├── transcribe_wav.py      # recover orphan WAVs after a crash
 │   ├── health-check.sh        # Linux audio/transcription test
 │   └── health-check-mac.sh    # macOS audio/transcription test
 ├── assets/

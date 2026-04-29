@@ -64,13 +64,11 @@ else
 fi
 "$VENV_DIR/bin/pip" install --upgrade pip -q
 "$VENV_DIR/bin/pip" install -q \
-    PyQt6>=6.6.0 \
+    "PyQt6>=6.6.0" \
     "pyobjc-framework-Cocoa>=10.0" \
-    icalendar>=5.0.0 \
-    requests>=2.31.0 \
-    pillow>=10.0.0 \
-    tomli>=2.0.0 \
-    py2app>=0.28.0
+    "pillow>=10.0.0" \
+    "tomli>=2.0.0" \
+    "py2app>=0.28.0"
 echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
 
 # -----------------------------------------------------------

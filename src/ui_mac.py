@@ -184,7 +184,6 @@ _STYLESHEET = """
 # Signals bridge — thread-safe state updates from background threads
 # ---------------------------------------------------------------------------
 class _Signals(QObject):
-    notify_upcoming = pyqtSignal(object)
     set_recording = pyqtSignal(object)
     set_processing = pyqtSignal()
     set_done = pyqtSignal(object)
@@ -219,10 +218,10 @@ class AloeScribeWindow(QMainWindow):
         self._timer_seconds = 0
         self._processing_seconds = 0
         self._processing_timer = None
+        self._quit_after_transcribe = False
 
         # Signals for thread-safe updates
         self._signals = _Signals()
-        self._signals.notify_upcoming.connect(self._render_notify)
         self._signals.set_recording.connect(self._render_recording)
         self._signals.set_processing.connect(self._render_processing)
         self._signals.set_done.connect(self._render_done)
@@ -304,17 +303,23 @@ class AloeScribeWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _render_idle(self):
+        # If the user requested quit during a recording, bail out once transcription completes.
+        if self._quit_after_transcribe:
+            app_ref = getattr(self, "_app_ref", None)
+            if app_ref is not None:
+                app_ref._final_quit()
+                return
         self._state = "idle"
         self._timer.stop()
         self._stop_processing_timer()
         self._clear_content()
 
-        label = QLabel("No meetings detected.")
+        label = QLabel("Ready when you are.")
         label.setObjectName("meetingTime")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(label)
 
-        sub = QLabel("Watching your calendar...")
+        sub = QLabel("Click below to start capturing audio.")
         sub.setObjectName("stateLabel")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(sub)
@@ -388,42 +393,6 @@ class AloeScribeWindow(QMainWindow):
         self._selected_system = combo.currentData() or ""
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
-
-    def _render_notify(self, meeting):
-        self._state = "notifying"
-        self._current_meeting = meeting
-        self._clear_content()
-
-        state = QLabel("MEETING SOON")
-        state.setObjectName("stateLabel")
-        state.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._content_layout.addWidget(state)
-
-        title = QLabel(meeting.title)
-        title.setObjectName("meetingTitle")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._content_layout.addWidget(title)
-
-        time_str = meeting.start.strftime("%I:%M %p")
-        time_label = QLabel(f"Starts in ~4 minutes \u00b7 {time_str}")
-        time_label.setObjectName("meetingTime")
-        time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._content_layout.addWidget(time_label)
-
-        btn_row = QHBoxLayout()
-        skip = QPushButton("Skip")
-        skip.setObjectName("btnSkip")
-        skip.clicked.connect(lambda: self._signals.set_idle.emit())
-
-        start = QPushButton("Start Recording")
-        start.setObjectName("btnStart")
-        start.clicked.connect(lambda: self._on_start(meeting))
-
-        btn_row.addWidget(skip)
-        btn_row.addWidget(start)
-        self._content_layout.addLayout(btn_row)
-
-        self._update_status("● MEETING SOON", "statusIdle")
 
     def _render_recording(self, meeting):
         self._state = "recording"
@@ -525,15 +494,15 @@ class AloeScribeWindow(QMainWindow):
 
         self._update_status("● DONE", "statusDone")
 
-        # Auto-return to idle after 10s
-        QTimer.singleShot(10000, self._signals.set_idle.emit)
+        # If we were waiting to quit after transcription, do that now
+        if self._quit_after_transcribe:
+            QTimer.singleShot(3000, self._signals.set_idle.emit)
+        else:
+            QTimer.singleShot(10000, self._signals.set_idle.emit)
 
     # ------------------------------------------------------------------ #
     # Public state setters (thread-safe via signals)                       #
     # ------------------------------------------------------------------ #
-
-    def notify_upcoming(self, meeting):
-        self._signals.notify_upcoming.emit(meeting)
 
     def set_recording(self, meeting):
         self._signals.set_recording.emit(meeting)
@@ -559,12 +528,8 @@ class AloeScribeWindow(QMainWindow):
 
     def _on_manual_start(self):
         try:
-            from calendar_watcher import Meeting
-            manual = Meeting(
-                title="Manual Recording",
-                start=datetime.now().astimezone(),
-                end=datetime.now().astimezone(),
-            )
+            from meeting import Meeting
+            manual = Meeting(title="Manual Recording")
             log.info("UI: manual start clicked")
             self._on_start(manual)
         except Exception as e:
@@ -714,7 +679,6 @@ class AloeScribeApp:
         # Status header
         status_map = {
             "idle": "Aloe Scribe — Idle",
-            "notifying": "Meeting soon",
             "recording": "Recording...",
             "processing": "Transcribing...",
             "done": "Done — transcript saved",
@@ -765,23 +729,27 @@ class AloeScribeApp:
         subprocess.Popen(["open", str(meetings_dir)])
 
     def _quit(self):
+        # If recording is in progress, stop + transcribe first, then quit.
+        if self._window and self._window._state == "recording":
+            log.info("Quit requested during recording — stopping + transcribing first")
+            self._window._quit_after_transcribe = True
+            self._window._on_stop()
+            return
         self._on_quit()
         if self._tray:
             self._tray.hide()
         self._app.quit()
 
+    def _final_quit(self):
+        self._on_quit()
+        if self._tray:
+            self._tray.hide()
+        if self._app:
+            self._app.quit()
+
     # ------------------------------------------------------------------ #
     # Proxy state methods (called by main.py)                              #
     # ------------------------------------------------------------------ #
-
-    def notify_upcoming(self, meeting):
-        if self._window:
-            self._window.notify_upcoming(meeting)
-            import notifications
-            notifications.send(
-                "Aloe Scribe",
-                f"Meeting in ~4 min: {meeting.title}",
-            )
 
     def set_recording(self, meeting):
         if self._window:

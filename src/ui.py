@@ -87,6 +87,7 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._timer_id = None
         self._processing_seconds = 0
         self._processing_timer_id = None
+        self._quit_after_transcribe = False
 
         # Set the window/dock icon to the aloe leaf
         _ensure_tray_icons()
@@ -219,7 +220,6 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         # Status header
         status_map = {
             "idle": "Aloe Scribe — Idle",
-            "notifying": "Meeting soon",
             "recording": "Recording...",
             "processing": "Transcribing...",
             "done": "Done — transcript saved",
@@ -303,12 +303,12 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
     def _render_idle(self):
         self._state = "idle"
         self._clear_content()
-        label = Gtk.Label(label="No meetings detected.")
+        label = Gtk.Label(label="Ready when you are.")
         label.get_style_context().add_class("meeting-time")
         label.set_margin_top(8)
         self._content.pack_start(label, False, False, 0)
 
-        sub = Gtk.Label(label="Watching your calendar...")
+        sub = Gtk.Label(label="Click below to start capturing audio.")
         sub.get_style_context().add_class("state-label")
         self._content.pack_start(sub, False, False, 0)
 
@@ -383,43 +383,6 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self._selected_system = combo.get_active_id() or ""
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
-
-    def _render_notify(self, meeting):
-        self._state = "notifying"
-        self._clear_content()
-
-        state = Gtk.Label(label="MEETING SOON")
-        state.get_style_context().add_class("state-label")
-        self._content.pack_start(state, False, False, 0)
-
-        title = Gtk.Label(label=meeting.title)
-        title.get_style_context().add_class("meeting-title")
-        title.set_margin_top(4)
-        self._content.pack_start(title, False, False, 0)
-
-        time_label = Gtk.Label(
-            label=f"Starts in ~4 minutes · {meeting.start.strftime('%I:%M %p')}"
-        )
-        time_label.get_style_context().add_class("meeting-time")
-        self._content.pack_start(time_label, False, False, 0)
-
-        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_row.set_margin_top(12)
-
-        skip = Gtk.Button(label="Skip")
-        skip.get_style_context().add_class("btn-skip")
-        skip.connect("clicked", lambda b: self.set_idle())
-
-        start = Gtk.Button(label="Start Recording")
-        start.get_style_context().add_class("btn-start")
-        start.connect("clicked", lambda b: self._on_start(meeting))
-
-        btn_row.pack_start(skip, True, True, 0)
-        btn_row.pack_start(start, True, True, 0)
-        self._content.pack_start(btn_row, False, False, 0)
-
-        self._update_status("● MEETING SOON", "status-idle")
-        self._content.show_all()
 
     def _render_recording(self, meeting):
         self._state = "recording"
@@ -531,9 +494,6 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
     # Public state setters (thread-safe via GLib.idle_add)                #
     # ------------------------------------------------------------------ #
 
-    def notify_upcoming(self, meeting):
-        GLib.idle_add(self._render_notify, meeting)
-
     def set_recording(self, meeting):
         GLib.idle_add(self._render_recording, meeting)
 
@@ -544,12 +504,27 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
     def set_done(self, output_path: Path):
         self._stop_timer()
         GLib.idle_add(self._render_done, output_path)
-        GLib.timeout_add_seconds(10, self.set_idle)
+        if self._quit_after_transcribe:
+            GLib.timeout_add_seconds(3, self._final_quit)
+        else:
+            GLib.timeout_add_seconds(10, self.set_idle)
 
     def set_idle(self):
         self._stop_timer()
+        if self._quit_after_transcribe:
+            GLib.idle_add(self._final_quit)
+            return False
         GLib.idle_add(self._render_idle)
         return False  # stop GLib timeout if called that way
+
+    def _final_quit(self):
+        self.on_quit()
+        app = getattr(self, "_app", None)
+        if app is not None:
+            app.quit()
+        else:
+            Gtk.main_quit()
+        return False
 
     # ------------------------------------------------------------------ #
     # Handlers                                                             #
@@ -560,12 +535,8 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         self.on_start_recording(meeting)
 
     def _on_manual_start(self, btn):
-        from calendar_watcher import Meeting
-        manual = Meeting(
-            title="Manual Recording",
-            start=datetime.now().astimezone(),
-            end=datetime.now().astimezone(),
-        )
+        from meeting import Meeting
+        manual = Meeting(title="Manual Recording")
         self._on_start(manual)
 
     def _on_stop(self):
@@ -573,16 +544,30 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         threading.Thread(target=self.on_stop_recording, daemon=True).start()
 
     def _on_close(self, widget, event):
-        # If called from tray Quit menu (widget is None), actually quit
+        # Tray Quit menu (widget=None): if recording, finish transcribing first
         if widget is None:
+            if self._state == "recording":
+                log.info("Quit requested during recording — stopping + transcribing first")
+                self._quit_after_transcribe = True
+                self._on_stop()
+                return False
             self.on_quit()
-            Gtk.main_quit()
+            app = getattr(self, "_app", None)
+            if app is not None:
+                app.quit()
+            else:
+                Gtk.main_quit()
             return False
-        # If window X button pressed, hide to tray instead of quitting
+        # Window X button: hide to tray instead of quitting (if tray is available)
         if getattr(self, "_indicator", None):
             self.hide()
-            return True  # prevent destroy
-        # No tray — actually quit
+            return True
+        # No tray — if recording, transcribe before quitting; otherwise quit
+        if self._state == "recording":
+            log.info("Window closed during recording — stopping + transcribing first")
+            self._quit_after_transcribe = True
+            self._on_stop()
+            return True  # keep window open until transcription completes
         self.on_quit()
         Gtk.main_quit()
         return False
@@ -688,12 +673,6 @@ class AloeScribeApp(Gtk.Application):
         super().run(None)
 
     # Proxy state methods so main.py can call them on the app object
-    def notify_upcoming(self, meeting):
-        if self._window:
-            self._window.notify_upcoming(meeting)
-            import notifications
-            notifications.send("Aloe Scribe", f"Meeting in ~4 min: {meeting.title}")
-
     def set_recording(self, meeting):
         if self._window:
             self._window.set_recording(meeting)
