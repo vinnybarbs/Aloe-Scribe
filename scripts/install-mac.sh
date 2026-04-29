@@ -87,8 +87,9 @@ cmake -B build -DWHISPER_METAL=ON -DCMAKE_BUILD_TYPE=Release 2>/dev/null
 cmake --build build --config Release -j$(sysctl -n hw.ncpu) 2>/dev/null
 echo "  whisper.cpp built with Metal"
 
-# Download model
-MODEL="small"
+# Download model — large-v3-turbo is the recommended default (near-large
+# accuracy at ~3-4x realtime; ~1.6 GB)
+MODEL="large-v3-turbo"
 MODEL_PATH="$WHISPER_DIR/models/ggml-${MODEL}.bin"
 if [ -f "$MODEL_PATH" ]; then
     echo "  Model '$MODEL' already downloaded"
@@ -183,6 +184,6 @@ echo "  To change audio devices later:"
 echo "    cd ~/aloe-scribe && .venv/bin/python3 src/main.py --setup"
 echo ""
 echo "  Next steps:"
-echo "    1. Edit ~/aloe-scribe/config/config.toml with your iCal URL"
-echo "    2. Run: bash scripts/health-check-mac.sh"
+echo "    1. Open Aloe Scribe and click 'Start Recording Now' to capture a call."
+echo "    2. (optional) Run: bash scripts/health-check-mac.sh"
 echo ""

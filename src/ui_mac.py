@@ -26,7 +26,10 @@ from PyQt6.QtWidgets import (
     QMenu,
     QFrame,
     QComboBox,
+    QProgressBar,
 )
+
+from audio_meter import make_avfoundation_meter
 
 def _setup_macos_app():
     """Register as a proper macOS GUI app with dock icon."""
@@ -188,6 +191,8 @@ class _Signals(QObject):
     set_processing = pyqtSignal()
     set_done = pyqtSignal(object)
     set_idle = pyqtSignal()
+    mic_level = pyqtSignal(float)
+    sys_level = pyqtSignal(float)
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +224,10 @@ class AloeScribeWindow(QMainWindow):
         self._processing_seconds = 0
         self._processing_timer = None
         self._quit_after_transcribe = False
+        self._mic_meter = None
+        self._sys_meter = None
+        self._mic_level_bar: Optional[QProgressBar] = None
+        self._sys_level_bar: Optional[QProgressBar] = None
 
         # Signals for thread-safe updates
         self._signals = _Signals()
@@ -226,6 +235,8 @@ class AloeScribeWindow(QMainWindow):
         self._signals.set_processing.connect(self._render_processing)
         self._signals.set_done.connect(self._render_done)
         self._signals.set_idle.connect(self._render_idle)
+        self._signals.mic_level.connect(self._update_mic_level)
+        self._signals.sys_level.connect(self._update_sys_level)
 
         # Timer
         self._timer = QTimer(self)
@@ -287,6 +298,10 @@ class AloeScribeWindow(QMainWindow):
         self._main_layout.addWidget(sep)
 
     def _clear_content(self):
+        # Stop meters before tearing down their bar widgets
+        self._stop_meters()
+        self._mic_level_bar = None
+        self._sys_level_bar = None
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             if item.widget():
@@ -297,6 +312,112 @@ class AloeScribeWindow(QMainWindow):
                     child = item.layout().takeAt(0)
                     if child.widget():
                         child.widget().deleteLater()
+
+    # ------------------------------------------------------------------ #
+    # Audio meters                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _build_level_bars(self):
+        """Add MIC LEVEL and SYSTEM AUDIO LEVEL bars to the current layout."""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._content_layout.addWidget(sep)
+
+        mic_label = QLabel("MIC LEVEL")
+        mic_label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(mic_label)
+
+        self._mic_level_bar = QProgressBar()
+        self._mic_level_bar.setRange(0, 1000)
+        self._mic_level_bar.setValue(0)
+        self._mic_level_bar.setTextVisible(False)
+        self._mic_level_bar.setFixedHeight(8)
+        self._content_layout.addWidget(self._mic_level_bar)
+
+        sys_label = QLabel("SYSTEM AUDIO LEVEL")
+        sys_label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(sys_label)
+
+        self._sys_level_bar = QProgressBar()
+        self._sys_level_bar.setRange(0, 1000)
+        self._sys_level_bar.setValue(0)
+        self._sys_level_bar.setTextVisible(False)
+        self._sys_level_bar.setFixedHeight(8)
+        self._content_layout.addWidget(self._sys_level_bar)
+
+    def _start_meters(self):
+        """Spawn ffmpeg readers for the current mic + system avfoundation indices."""
+        if not self.isVisible():
+            return
+        self._stop_meters()
+
+        # Resolve the dropdown selection (a device name) to an avfoundation index.
+        # Reuse the recorder_mac helpers so meters use the same device the recorder will.
+        try:
+            from recorder_mac import _resolve_device, _find_default_mic, _find_blackhole
+        except Exception as e:
+            log.warning(f"Cannot import recorder_mac helpers: {e}")
+            return
+
+        mic_idx = _resolve_device(self._selected_mic) or _find_default_mic()
+        sys_idx = _resolve_device(self._selected_system) or _find_blackhole() or ""
+
+        if mic_idx:
+            self._mic_meter = make_avfoundation_meter(
+                mic_idx,
+                lambda lvl: self._signals.mic_level.emit(lvl),
+            )
+            if self._mic_meter and not self._mic_meter.start():
+                self._mic_meter = None
+
+        if sys_idx:
+            self._sys_meter = make_avfoundation_meter(
+                sys_idx,
+                lambda lvl: self._signals.sys_level.emit(lvl),
+            )
+            if self._sys_meter and not self._sys_meter.start():
+                self._sys_meter = None
+
+    def _stop_meters(self):
+        for attr in ("_mic_meter", "_sys_meter"):
+            meter = getattr(self, attr, None)
+            if meter is not None:
+                try:
+                    meter.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+    def _restart_meters_if_active(self):
+        if self._mic_meter is not None or self._sys_meter is not None:
+            self._start_meters()
+
+    def _update_mic_level(self, level: float):
+        bar = self._mic_level_bar
+        if bar is not None:
+            try:
+                bar.setValue(int(min(1.0, max(0.0, level)) * 1000))
+            except Exception:
+                pass
+
+    def _update_sys_level(self, level: float):
+        bar = self._sys_level_bar
+        if bar is not None:
+            try:
+                bar.setValue(int(min(1.0, max(0.0, level)) * 1000))
+            except Exception:
+                pass
+
+    def hideEvent(self, event):
+        # Save CPU when the window is hidden to the menu bar
+        self._stop_meters()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._state in ("idle", "recording") and self._mic_level_bar is not None:
+            self._start_meters()
 
     # ------------------------------------------------------------------ #
     # State renderers                                                       #
@@ -328,12 +449,16 @@ class AloeScribeWindow(QMainWindow):
         if self._list_sources:
             self._build_device_dropdowns()
 
+        # Live level meters so the user can verify audio is flowing
+        self._build_level_bars()
+
         btn = QPushButton("Start Recording Now")
         btn.setObjectName("btnStart")
         btn.clicked.connect(self._on_manual_start)
         self._content_layout.addWidget(btn)
 
         self._update_status("● IDLE", "statusIdle")
+        self._start_meters()
 
     def _build_device_dropdowns(self):
         """Add mic and speaker/system audio dropdowns to the idle view."""
@@ -388,11 +513,13 @@ class AloeScribeWindow(QMainWindow):
         self._selected_mic = combo.currentData() or ""
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
+        self._restart_meters_if_active()
 
     def _on_sys_changed(self, combo):
         self._selected_system = combo.currentData() or ""
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
+        self._restart_meters_if_active()
 
     def _render_recording(self, meeting):
         self._state = "recording"
@@ -414,6 +541,9 @@ class AloeScribeWindow(QMainWindow):
         self._timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(self._timer_label)
 
+        # Live level meters so the user can verify audio is flowing
+        self._build_level_bars()
+
         stop = QPushButton("Stop & Transcribe")
         stop.setObjectName("btnStop")
         stop.clicked.connect(self._on_stop)
@@ -422,6 +552,7 @@ class AloeScribeWindow(QMainWindow):
         self._update_status("● RECORDING", "statusRecord")
         self._timer_seconds = 0
         self._timer.start()
+        self._start_meters()
 
     def _render_processing(self):
         self._state = "processing"

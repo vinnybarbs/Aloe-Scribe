@@ -1,16 +1,22 @@
 """
-audio_meter.py — Live PulseAudio level reader for a single source.
+audio_meter.py — Live audio level reader.
 
-Spawns `parec` as a subprocess and reports peak levels (0.0–1.0) at ~10 Hz
-via a callback. PulseAudio sources support multiple simultaneous readers,
-so this can run alongside the recorder without disrupting it.
+Spawns a subprocess that streams 16-bit signed little-endian PCM at 16 kHz
+mono on stdout, computes the absolute peak of each ~100 ms chunk, and reports
+it via a callback. Used by the GTK and PyQt6 UIs to draw VU bars next to the
+device dropdowns and during recording.
+
+Two factories build the right command for the current platform:
+  - make_pulseaudio_meter(source, on_level)        — Linux (parec)
+  - make_avfoundation_meter(device_idx, on_level)  — macOS (ffmpeg)
 """
 
 import logging
 import struct
 import subprocess
+import sys
 import threading
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 log = logging.getLogger(__name__)
 
@@ -21,8 +27,9 @@ class AudioMeter:
     CHUNK_SAMPLES = (RATE * CHUNK_MS) // 1000
     CHUNK_BYTES = CHUNK_SAMPLES * 2  # s16le = 2 bytes/sample
 
-    def __init__(self, source: str, on_level: Callable[[float], None]):
-        self.source = source
+    def __init__(self, cmd: List[str], on_level: Callable[[float], None]):
+        """cmd: subprocess command that writes raw s16le 16kHz mono PCM to stdout."""
+        self.cmd = cmd
         self.on_level = on_level
         self._proc: Optional[subprocess.Popen] = None
         self._thread: Optional[threading.Thread] = None
@@ -31,28 +38,20 @@ class AudioMeter:
     def start(self) -> bool:
         if self._proc is not None:
             return True
-        if not self.source:
+        if not self.cmd:
             return False
-        cmd = [
-            "parec",
-            f"--device={self.source}",
-            "--format=s16le",
-            f"--rate={self.RATE}",
-            "--channels=1",
-            "--latency-msec=50",
-            "--raw",
-        ]
         try:
             self._proc = subprocess.Popen(
-                cmd,
+                self.cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            log.warning("parec not found — audio meters disabled")
+            log.warning(f"Command not found: {self.cmd[0]} — meter disabled")
             return False
         except Exception as e:
-            log.warning(f"Failed to start meter for {self.source}: {e}")
+            log.warning(f"Failed to start meter ({self.cmd[0]}): {e}")
             return False
 
         self._stop.clear()
@@ -99,3 +98,53 @@ class AudioMeter:
                 self.on_level(peak)
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Platform factories
+# ---------------------------------------------------------------------------
+
+def make_pulseaudio_meter(source: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
+    """Linux: read a PulseAudio source name via parec."""
+    if not source:
+        return None
+    cmd = [
+        "parec",
+        f"--device={source}",
+        "--format=s16le",
+        f"--rate={AudioMeter.RATE}",
+        "--channels=1",
+        "--latency-msec=50",
+        "--raw",
+    ]
+    return AudioMeter(cmd, on_level)
+
+
+def make_avfoundation_meter(device_index: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
+    """macOS: read an avfoundation device (e.g. ':2') via ffmpeg."""
+    if not device_index:
+        return None
+    # ffmpeg writes raw s16le PCM to stdout. -nostdin so it doesn't fight the
+    # parent for tty/stdin input. -loglevel error keeps stderr quiet.
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel", "error",
+        "-f", "avfoundation",
+        "-i", device_index,
+        "-ar", str(AudioMeter.RATE),
+        "-ac", "1",
+        "-f", "s16le",
+        "-",
+    ]
+    return AudioMeter(cmd, on_level)
+
+
+def make_meter_for_platform(source: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
+    """Convenience: pick the right factory for the current platform.
+
+    On Linux, `source` is a PulseAudio source name.
+    On macOS, `source` is an avfoundation device index string like ':2'."""
+    if sys.platform == "darwin":
+        return make_avfoundation_meter(source, on_level)
+    return make_pulseaudio_meter(source, on_level)

@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
-from audio_meter import AudioMeter
+from audio_meter import AudioMeter, make_pulseaudio_meter
 from recorder import _find_default_mic, _find_monitor_source
 
 log = logging.getLogger(__name__)
@@ -377,19 +377,19 @@ class AloeScribeWindow(Gtk.ApplicationWindow):
         sys_src = self._selected_system or (_find_monitor_source() or "")
 
         if mic_src:
-            self._mic_meter = AudioMeter(
+            self._mic_meter = make_pulseaudio_meter(
                 mic_src,
                 lambda lvl: GLib.idle_add(self._update_mic_level, lvl),
             )
-            if not self._mic_meter.start():
+            if self._mic_meter and not self._mic_meter.start():
                 self._mic_meter = None
 
         if sys_src:
-            self._sys_meter = AudioMeter(
+            self._sys_meter = make_pulseaudio_meter(
                 sys_src,
                 lambda lvl: GLib.idle_add(self._update_sys_level, lvl),
             )
-            if not self._sys_meter.start():
+            if self._sys_meter and not self._sys_meter.start():
                 self._sys_meter = None
 
     def _stop_meters(self):
