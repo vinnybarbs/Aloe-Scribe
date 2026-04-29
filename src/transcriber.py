@@ -80,10 +80,17 @@ class Transcriber:
             )
             return None
 
+        # whisper.cpp defaults to 4 threads. On a modern 8+ core CPU, 8 threads
+        # cuts compute time roughly in half. Going past physical core count is
+        # counter-productive (SMT contention slows the encoder), so we cap at
+        # 8 unless the user has fewer logical cores.
+        threads = min(8, max(1, (os.cpu_count() or 4)))
+
         cmd = [
             self.binary_path,
             "-m", self.model_path,
             "-f", str(audio_path),
+            "-t", str(threads),
             "-l", "en",
         ]
 
