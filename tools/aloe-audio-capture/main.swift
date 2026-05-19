@@ -115,11 +115,76 @@ func parseArgs() -> Args {
                 channels: channels)
 }
 
+// MARK: - WAV writer
+//
+// We write the WAV by hand instead of going through AVAudioFile because
+// AVAudioFile inserts JUNK and FLLR padding chunks between `fmt ` and `data`
+// for 4 KB alignment. ffmpeg/ffprobe handle them, whisper.cpp's WAV reader
+// does not and fails with "failed to read the frames of the audio data".
+
+final class WavWriter {
+    private let handle: FileHandle
+    private let sampleRate: UInt32
+    private let channels: UInt16
+    private let bitsPerSample: UInt16 = 16
+    private(set) var dataBytesWritten: UInt32 = 0
+    private var finalized = false
+
+    init(url: URL, sampleRate: Double, channels: AVAudioChannelCount) throws {
+        self.sampleRate = UInt32(sampleRate)
+        self.channels = UInt16(channels)
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        self.handle = try FileHandle(forWritingTo: url)
+        try writeHeader(dataSize: 0)
+    }
+
+    func write(_ samples: [Int16]) throws {
+        let bytes = samples.withUnsafeBytes { Data($0) }
+        try handle.write(contentsOf: bytes)
+        dataBytesWritten &+= UInt32(bytes.count)
+    }
+
+    func finalize() throws {
+        if finalized { return }
+        finalized = true
+        try handle.seek(toOffset: 0)
+        try writeHeader(dataSize: dataBytesWritten)
+        try handle.close()
+    }
+
+    private func writeHeader(dataSize: UInt32) throws {
+        let byteRate = sampleRate * UInt32(channels) * UInt32(bitsPerSample / 8)
+        let blockAlign = channels * (bitsPerSample / 8)
+        let riffSize = 36 &+ dataSize
+
+        var h = Data()
+        h.append(contentsOf: Array("RIFF".utf8))
+        h.append(le(riffSize))
+        h.append(contentsOf: Array("WAVE".utf8))
+        h.append(contentsOf: Array("fmt ".utf8))
+        h.append(le(UInt32(16)))           // PCM fmt chunk size
+        h.append(le(UInt16(1)))            // format = 1 (PCM)
+        h.append(le(channels))
+        h.append(le(sampleRate))
+        h.append(le(byteRate))
+        h.append(le(blockAlign))
+        h.append(le(bitsPerSample))
+        h.append(contentsOf: Array("data".utf8))
+        h.append(le(dataSize))
+        try handle.write(contentsOf: h)
+    }
+
+    private func le<T: FixedWidthInteger>(_ v: T) -> Data {
+        var x = v.littleEndian
+        return Data(bytes: &x, count: MemoryLayout<T>.size)
+    }
+}
+
 // MARK: - Mixer
 
 final class Mixer: @unchecked Sendable {
     private let outputFormat: AVAudioFormat
-    private let audioFile: AVAudioFile
+    private let wavWriter: WavWriter
     private let expectsSystem: Bool
     private let expectsMic: Bool
 
@@ -151,19 +216,9 @@ final class Mixer: @unchecked Sendable {
         self.expectsMic = expectsMic
 
         let url = URL(fileURLWithPath: outputPath)
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: channels,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsNonInterleaved: false,
-        ]
-        self.audioFile = try AVAudioFile(forWriting: url,
-                                         settings: settings,
-                                         commonFormat: .pcmFormatInt16,
-                                         interleaved: true)
+        self.wavWriter = try WavWriter(url: url,
+                                       sampleRate: sampleRate,
+                                       channels: channels)
     }
 
     var format: AVAudioFormat { outputFormat }
@@ -217,19 +272,6 @@ final class Mixer: @unchecked Sendable {
     }
 
     private func writeFrames(_ samples: [Int16]) {
-        let frameCount = AVAudioFrameCount(samples.count)
-        guard let buf = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frameCount) else {
-            eprint("Mixer: could not allocate PCM buffer")
-            return
-        }
-        buf.frameLength = frameCount
-        guard let dst = buf.int16ChannelData?[0] else {
-            eprint("Mixer: int16ChannelData is nil")
-            return
-        }
-        samples.withUnsafeBufferPointer { src in
-            dst.update(from: src.baseAddress!, count: samples.count)
-        }
         // Diagnostic: report peak amplitude per write (kept once per ~1 sec).
         let priorSec = framesWritten / 16000
         let nextSec = (framesWritten + samples.count) / 16000
@@ -242,7 +284,7 @@ final class Mixer: @unchecked Sendable {
             eprint("Mixer: write \(samples.count) frames, peak=\(peak)")
         }
         do {
-            try audioFile.write(from: buf)
+            try wavWriter.write(samples)
             framesWritten += samples.count
         } catch {
             eprint("Mixer write error: \(error.localizedDescription)")
@@ -286,6 +328,12 @@ final class Mixer: @unchecked Sendable {
                 systemFrames.removeAll()
                 micFrames.removeAll()
                 writeFrames(mixed)
+            }
+            // Patch the WAV header with the actual data size & close the file.
+            do {
+                try wavWriter.finalize()
+            } catch {
+                eprint("Mixer finalize error: \(error.localizedDescription)")
             }
         }
     }
