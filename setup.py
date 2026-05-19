@@ -12,10 +12,14 @@ APP = ["src/main.py"]
 DATA_FILES = [
     ("assets", ["assets/icon.png"]),
     ("config", ["config/config.toml"]),
+    # Swift helper that captures system audio via ScreenCaptureKit. Ends up
+    # at Contents/Resources/bin/aloe-audio-capture inside the .app bundle —
+    # recorder_mac._helper_path() looks for it there.
+    ("bin", ["bin/aloe-audio-capture"]),
 ]
 
 OPTIONS = {
-    "argv_emulation": False,
+    "argv_emulation": False, "iconfile": "assets/AppIcon.icns",
     "includes": [
         "meeting",
         "recorder_mac",
@@ -42,6 +46,7 @@ OPTIONS = {
         "CFBundleShortVersionString": "1.0",
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "Aloe Scribe needs microphone access to record meeting audio.",
+        "NSScreenCaptureUsageDescription": "Aloe Scribe needs screen capture access to record system audio (the audio from the apps you're listening to) — no video is captured or saved.",
         "LSUIElement": False,
     },
 }

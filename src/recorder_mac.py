@@ -1,14 +1,21 @@
 """
-recorder_mac.py — Captures mic + system audio on macOS via avfoundation.
+recorder_mac.py — macOS audio capture for Aloe Scribe.
 
-Uses ffmpeg with the avfoundation backend. System audio capture requires
-BlackHole (brew install --cask blackhole-2ch) and a Multi-Output Device
-configured in Audio MIDI Setup.
+Uses the Swift helper binary `aloe-audio-capture` to tap system audio via
+ScreenCaptureKit (no BlackHole / Multi-Output Device setup required) and mix
+in the selected mic via an ffmpeg child process. The helper writes a single
+16 kHz mono WAV ready for whisper.cpp.
+
+The avfoundation device enumeration is kept here because the macOS UI still
+populates the mic dropdown from it.
 """
 
 import logging
+import os
 import re
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +23,26 @@ log = logging.getLogger(__name__)
 
 FFMPEG_BIN = "ffmpeg"
 
+
+# ---------------------------------------------------------------------------
+# Helper-binary discovery
+# ---------------------------------------------------------------------------
+
+def _helper_path() -> Path:
+    """
+    Locate the aloe-audio-capture Swift helper binary.
+
+    - When running from a py2app .app bundle: lives in Contents/Resources/bin
+    - When running from a source checkout: lives in <repo>/bin
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent.parent / "Resources" / "bin" / "aloe-audio-capture"
+    return Path(__file__).resolve().parent.parent / "bin" / "aloe-audio-capture"
+
+
+# ---------------------------------------------------------------------------
+# avfoundation device enumeration (UI dropdown only — capture goes via SCK)
+# ---------------------------------------------------------------------------
 
 def _list_avfoundation_devices() -> dict:
     """
@@ -40,7 +67,6 @@ def _list_avfoundation_devices() -> dict:
             in_audio = True
             continue
         if in_audio:
-            # Lines look like: [AVFoundation ...] [0] MacBook Pro Microphone
             m = re.search(r"\[(\d+)\]\s+(.*)", line)
             if m:
                 audio_devices.append((int(m.group(1)), m.group(2).strip()))
@@ -50,7 +76,7 @@ def _list_avfoundation_devices() -> dict:
     return {"audio": audio_devices}
 
 
-# Virtual/software audio devices to skip when auto-detecting a mic
+# Virtual/software audio devices to skip when auto-detecting a mic.
 _VIRTUAL_DEVICES = {"blackhole", "microsoft teams", "zoomaudio", "zoom audio"}
 
 
@@ -59,111 +85,133 @@ def _is_virtual(name: str) -> bool:
     return any(v in lower for v in _VIRTUAL_DEVICES)
 
 
-def _find_default_mic() -> str:
-    """
-    Find the best physical mic, refreshed each time.
-    Skips virtual devices (BlackHole, Teams, Zoom).
-    Prefers external mics over built-in.
-    """
-    devices = _list_avfoundation_devices()
-    physical = [(idx, name) for idx, name in devices.get("audio", [])
-                if not _is_virtual(name)]
-
-    if not physical:
-        log.warning("No physical microphone found, using :0")
-        return ":0"
-
-    # Prefer external mics (USB/Bluetooth) over built-in
-    for idx, name in physical:
-        lower = name.lower()
-        if "macbook" not in lower and "built" not in lower:
-            log.info(f"Using external mic: [{idx}] {name}")
-            return f":{idx}"
-
-    idx, name = physical[0]
-    log.info(f"Using mic: [{idx}] {name}")
-    return f":{idx}"
-
-
-def _find_blackhole() -> Optional[str]:
-    """
-    Look for a BlackHole device in avfoundation audio devices.
-    Returns the device string (e.g. \":1\") or None.
-    """
-    devices = _list_avfoundation_devices()
-    for idx, name in devices.get("audio", []):
-        if "blackhole" in name.lower():
-            log.info(f"Found BlackHole audio device: [{idx}] {name}")
-            return f":{idx}"
-    return None
-
+# ---------------------------------------------------------------------------
+# avfoundation-index helpers (used by ui_mac's VU meters, not by capture)
+# ---------------------------------------------------------------------------
 
 def _resolve_device(config_value: str) -> Optional[str]:
     """
-    Resolve a device config value to an avfoundation index string.
-    Config can be:
-      - "" (empty) → auto-detect
-      - ":2" → literal index (used as-is)
-      - "Jabra SPEAK" → name search (looked up each launch)
+    Map a stored device value to an avfoundation index string like ":4".
+    Accepts:
+      - "" (empty) → None, caller falls back to auto-detect
+      - ":N" → returned as-is
+      - "<name>" → looked up by case-insensitive substring match
     """
     if not config_value:
         return None
     if config_value.startswith(":"):
-        return config_value  # already an index
-    # Search by name
+        return config_value
     devices = _list_avfoundation_devices()
-    config_lower = config_value.lower()
+    lower = config_value.lower()
     for idx, name in devices.get("audio", []):
-        if config_lower in name.lower():
-            log.info(f"Resolved '{config_value}' → [{idx}] {name}")
+        if lower in name.lower():
             return f":{idx}"
-    log.warning(f"Device '{config_value}' not found — will auto-detect")
     return None
+
+
+def _find_default_mic() -> str:
+    """avfoundation-index variant of mic auto-detect. Returns ':N' or ':0'."""
+    devices = _list_avfoundation_devices()
+    physical = [(idx, name) for idx, name in devices.get("audio", [])
+                if not _is_virtual(name)]
+    if not physical:
+        return ":0"
+    for idx, name in physical:
+        lower = name.lower()
+        if "macbook" not in lower and "built" not in lower:
+            return f":{idx}"
+    return f":{physical[0][0]}"
+
+
+def _find_blackhole() -> Optional[str]:
+    """Locate BlackHole's avfoundation index (used only by the legacy meter)."""
+    devices = _list_avfoundation_devices()
+    for idx, name in devices.get("audio", []):
+        if "blackhole" in name.lower():
+            return f":{idx}"
+    return None
+
+
+def _find_default_mic_name() -> str:
+    """
+    Return the *name* of the best physical mic (refreshed each call). Skips
+    virtual devices and prefers external mics over the built-in. Empty string
+    if no input is available.
+    """
+    devices = _list_avfoundation_devices()
+    physical = [(idx, name) for idx, name in devices.get("audio", [])
+                if not _is_virtual(name)]
+    if not physical:
+        log.warning("No physical microphone found")
+        return ""
+    # Prefer external mics (USB / wired) over built-in.
+    for _idx, name in physical:
+        lower = name.lower()
+        if "macbook" not in lower and "built" not in lower:
+            log.info(f"Auto-detected mic: {name}")
+            return name
+    name = physical[0][1]
+    log.info(f"Auto-detected mic: {name}")
+    return name
 
 
 def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """
-    List available audio sources on macOS via avfoundation.
+    List available audio sources on macOS for the UI dropdowns.
     Returns (mic_sources, system_sources) as lists of (id, display_name).
-    Only shows BlackHole for system audio — Teams/Zoom virtual devices are hidden
-    since they only capture that app's audio, not full system output.
+
+    Mic list is the real set of physical inputs from avfoundation (id == name
+    so we get a stable identifier across reboots / device-index shuffles).
+
+    System list is a single synthetic option — ScreenCaptureKit always
+    captures the desktop's mix, regardless of which BlackHole / Multi-Output
+    Device is configured.
     """
     devices = _list_avfoundation_devices()
-    audio = devices.get("audio", [])
     mics = []
-    system = []
-    for idx, name in audio:
-        device_id = name  # save by name for stability across reboots
-        if "blackhole" in name.lower():
-            system.append((device_id, f"{name} (System Audio)"))
-        elif _is_virtual(name):
-            # Skip Teams/Zoom virtual devices — not useful for system capture
+    for _idx, name in devices.get("audio", []):
+        if _is_virtual(name):
             continue
-        else:
-            mics.append((device_id, name))
+        mics.append((name, name))
+    system = [("system", "System Audio (built-in)")]
     return mics, system
 
 
+# ---------------------------------------------------------------------------
+# Recorder
+# ---------------------------------------------------------------------------
+
 class Recorder:
     """
-    Records mic + system audio into a single WAV file using ffmpeg on macOS.
+    Records mic + system audio into a single 16 kHz mono WAV via the Swift
+    helper. System audio is captured by ScreenCaptureKit; mic is captured by
+    a child ffmpeg process the helper spawns. The two streams are
+    sample-aligned and mixed inside the helper before being written.
 
-    Mic is captured via avfoundation default audio input.
-    System audio is captured via BlackHole virtual audio device (if installed).
+    `mic_source`: avfoundation device name (e.g. "Jabra SPEAK 510 USB"), or
+        empty/auto for auto-detect.
+    `system_source`: kept for UI/config compatibility. Treated as a boolean:
+        falsy ("", "off", "none") means do not capture system audio. Anything
+        else (including the synthetic "system" id) enables SCK capture.
     """
 
     def __init__(self, mic_source: str = "", system_source: str = ""):
-        # Store config values — resolved fresh at each recording start
         self._mic_config = mic_source
         self._sys_config = system_source
         self._process: Optional[subprocess.Popen] = None
         self._output_path: Optional[Path] = None
 
-    def _resolve_sources(self):
-        """Re-detect audio devices (called at each recording start)."""
-        self.mic_source = _resolve_device(self._mic_config) or _find_default_mic()
-        self.system_source = _resolve_device(self._sys_config) or _find_blackhole()
-        log.info(f"Audio sources — mic: {self.mic_source}, system: {self.system_source or 'none'}")
+    def _resolved_mic_name(self) -> str:
+        if self._mic_config:
+            return self._mic_config
+        return _find_default_mic_name()
+
+    def _capture_system(self) -> bool:
+        # Default = capture system audio (SCK makes it always available).
+        # Only explicit off keywords disable it. Treat legacy BlackHole names
+        # as "on" too so a pre-SCK config keeps working.
+        v = (self._sys_config or "").strip().lower()
+        return v not in {"off", "none", "false", "0", "no", "disabled"}
 
     def start(self, output_path: Path) -> bool:
         """Start recording to output_path. Returns True if started successfully."""
@@ -171,56 +219,85 @@ class Recorder:
             log.warning("Already recording")
             return False
 
-        # Re-detect devices each time (handles AirPods, USB mics, etc.)
-        self._resolve_sources()
+        helper = _helper_path()
+        if not helper.exists() or not os.access(helper, os.X_OK):
+            log.error(
+                f"Audio helper not found or not executable: {helper}\n"
+                "Rebuild it with: swiftc -O tools/aloe-audio-capture/main.swift -o bin/aloe-audio-capture"
+            )
+            return False
+
+        mic_name = self._resolved_mic_name()
+        capture_system = self._capture_system()
+        if not mic_name and not capture_system:
+            log.error("Refusing to record: no mic and no system audio")
+            return False
 
         self._output_path = output_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = self._build_ffmpeg_cmd(output_path)
-        log.info(f"Starting recorder: {' '.join(cmd)}")
+        cmd: list[str] = [str(helper), "--output", str(output_path)]
+        if mic_name:
+            cmd += ["--mic", mic_name]
+        if not capture_system:
+            cmd += ["--no-system"]
 
+        log.info(f"Starting recorder: {' '.join(cmd)}")
         try:
             self._process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
-            # Give ffmpeg a moment to fail (e.g. permission denied)
-            import time
-            time.sleep(0.5)
-            if self._process.poll() is not None:
-                _, stderr = self._process.communicate()
-                log.error(f"ffmpeg exited immediately: {stderr.decode(errors='replace')}")
-                if "Permission" in stderr.decode(errors='replace') or "denied" in stderr.decode(errors='replace'):
-                    log.error(
-                        "Microphone access denied. Grant permission in:\n"
-                        "  System Settings → Privacy & Security → Microphone"
-                    )
-                self._process = None
-                return False
-            return True
         except FileNotFoundError:
-            log.error("ffmpeg not found — install with: brew install ffmpeg")
+            log.error(f"Helper binary missing: {helper}")
             return False
         except Exception as e:
-            log.error(f"Failed to start recorder: {e}")
+            log.error(f"Failed to spawn helper: {e}")
             return False
 
+        # Give the helper ~0.5 s to fail (e.g. Screen Recording denied).
+        time.sleep(0.5)
+        if self._process.poll() is not None:
+            _, stderr = self._process.communicate()
+            err_text = stderr.decode(errors="replace") if stderr else ""
+            log.error(f"Helper exited immediately: {err_text}")
+            # Surface the two common TCC failure modes loudly.
+            if "Screen Recording" in err_text or "TCCs" in err_text:
+                log.error(
+                    "Grant Screen Recording access:\n"
+                    "  System Settings → Privacy & Security → Screen Recording → Aloe Scribe"
+                )
+            if "Microphone" in err_text or "microphone" in err_text:
+                log.error(
+                    "Grant Microphone access:\n"
+                    "  System Settings → Privacy & Security → Microphone → Aloe Scribe"
+                )
+            self._process = None
+            return False
+        return True
+
     def stop(self) -> Optional[Path]:
-        """Stop recording. Returns path to the recorded WAV file."""
+        """Stop recording. Returns the path to the recorded WAV file."""
         if not self._process:
             log.warning("Not recording")
             return None
 
         log.info("Stopping recorder...")
         try:
+            assert self._process.stdin is not None
             self._process.stdin.write(b"q")
             self._process.stdin.flush()
-            self._process.wait(timeout=10)
-        except Exception:
-            self._process.kill()
+            self._process.stdin.close()
+            self._process.wait(timeout=15)
+        except Exception as e:
+            log.warning(f"Clean stop failed ({e}) — terminating")
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except Exception:
+                self._process.kill()
 
         self._process = None
         log.info(f"Recording saved: {self._output_path}")
@@ -228,30 +305,3 @@ class Recorder:
 
     def is_recording(self) -> bool:
         return self._process is not None and self._process.poll() is None
-
-    def _build_ffmpeg_cmd(self, output_path: Path) -> list[str]:
-        """Build the ffmpeg command for macOS avfoundation capture."""
-        if self.system_source:
-            # Two inputs: mic + BlackHole system audio, mixed together
-            cmd = [
-                FFMPEG_BIN, "-y",
-                "-f", "avfoundation", "-i", self.mic_source,
-                "-f", "avfoundation", "-i", self.system_source,
-                "-filter_complex", "amix=inputs=2:duration=longest:normalize=0",
-                "-ar", "16000",
-                "-ac", "1",
-                "-c:a", "pcm_s16le",
-                str(output_path),
-            ]
-        else:
-            # Mic only fallback
-            log.warning("No system audio device — recording mic only")
-            cmd = [
-                FFMPEG_BIN, "-y",
-                "-f", "avfoundation", "-i", self.mic_source,
-                "-ar", "16000",
-                "-ac", "1",
-                "-c:a", "pcm_s16le",
-                str(output_path),
-            ]
-        return cmd
