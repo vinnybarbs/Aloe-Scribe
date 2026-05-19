@@ -237,7 +237,7 @@ class Recorder:
                 FFMPEG_BIN, "-y",
                 "-f", "avfoundation", "-i", self.mic_source,
                 "-f", "avfoundation", "-i", self.system_source,
-                "-filter_complex", "amix=inputs=2:duration=longest",
+                "-filter_complex", "amix=inputs=2:duration=longest:normalize=0",
                 "-ar", "16000",
                 "-ac", "1",
                 "-c:a", "pcm_s16le",

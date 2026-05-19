@@ -86,12 +86,20 @@ class Transcriber:
         # 8 unless the user has fewer logical cores.
         threads = min(8, max(1, (os.cpu_count() or 4)))
 
+        # -mc 0  : do not carry previous-window text forward as context. Without
+        #          this, whisper's "condition on previous text" causes a single
+        #          hallucination during silence to cascade into the same phrase
+        #          repeating dozens of times.
+        # -sns   : suppress non-speech tokens. Stops whisper from filling silence
+        #          with "Okay.", "Thank you.", "[Music]", etc.
         cmd = [
             self.binary_path,
             "-m", self.model_path,
             "-f", str(audio_path),
             "-t", str(threads),
             "-l", "en",
+            "-mc", "0",
+            "-sns",
         ]
 
         log.info(f"Running: {' '.join(cmd)}")
