@@ -43,11 +43,12 @@ func saturateMix(_ a: Int16, _ b: Int16) -> Int16 {
 // MARK: - CLI parsing
 
 struct Args {
-    let output: String
-    let micDeviceName: String?      // nil = no mic capture
+    let output: String?              // nil only in --meter mode (PCM → stdout)
+    let micDeviceName: String?       // nil = no mic capture
     let captureSystem: Bool          // --no-system disables system capture
     let sampleRate: Double
     let channels: AVAudioChannelCount
+    let meterMode: Bool              // --meter: stream SCK PCM to stdout, no WAV
 }
 
 func parseArgs() -> Args {
@@ -56,6 +57,7 @@ func parseArgs() -> Args {
     var captureSystem = true
     var sampleRate: Double = 16_000
     var channels: AVAudioChannelCount = 1
+    var meterMode = false
 
     let argv = CommandLine.arguments
     var i = 1
@@ -72,6 +74,8 @@ func parseArgs() -> Args {
             micDeviceName = argv[i]
         case "--no-system":
             captureSystem = false
+        case "--meter":
+            meterMode = true
         case "--sample-rate", "-r":
             i += 1
             guard i < argv.count, let v = Double(argv[i]) else {
@@ -88,8 +92,12 @@ func parseArgs() -> Args {
             print("""
             Usage: aloe-audio-capture --output <path> [--mic <name>] [--no-system]
                                       [--sample-rate 16000] [--channels 1]
+                   aloe-audio-capture --meter [--sample-rate 16000]
 
-            At least one source (system audio or --mic) must be active.
+            Record mode (default): mix system audio (SCK) + optional mic into a WAV.
+            Meter mode (--meter):   stream raw s16le mono PCM of system audio to
+                                    stdout for a live UI level bar.
+
             Stops on 'q' on stdin, EOF on stdin, SIGINT, or SIGTERM.
             """)
             exit(0)
@@ -100,8 +108,16 @@ func parseArgs() -> Args {
         i += 1
     }
 
+    if meterMode {
+        return Args(output: nil,
+                    micDeviceName: nil,
+                    captureSystem: true,
+                    sampleRate: sampleRate,
+                    channels: 1,
+                    meterMode: true)
+    }
     guard let output = output else {
-        eprint("Error: --output is required")
+        eprint("Error: --output is required (or pass --meter for level-only mode)")
         exit(2)
     }
     if !captureSystem && micDeviceName == nil {
@@ -112,7 +128,8 @@ func parseArgs() -> Args {
                 micDeviceName: micDeviceName,
                 captureSystem: captureSystem,
                 sampleRate: sampleRate,
-                channels: channels)
+                channels: channels,
+                meterMode: false)
 }
 
 // MARK: - WAV writer
@@ -343,7 +360,10 @@ final class Mixer: @unchecked Sendable {
 
 final class SystemCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unchecked Sendable {
 
-    private let mixer: Mixer
+    typealias SampleSink = ([Int16]) -> Void
+
+    private let targetFormat: AVAudioFormat
+    private let sink: SampleSink
     private var stream: SCStream?
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
@@ -351,8 +371,9 @@ final class SystemCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unchecke
                                              qos: .userInteractive)
     private(set) var buffersReceived: Int = 0
 
-    init(mixer: Mixer) {
-        self.mixer = mixer
+    init(targetFormat: AVAudioFormat, sink: @escaping SampleSink) {
+        self.targetFormat = targetFormat
+        self.sink = sink
     }
 
     func start() async throws {
@@ -410,7 +431,7 @@ final class SystemCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unchecke
                     var asbd = asbdPtr
                     sourceFormat = AVAudioFormat(streamDescription: &asbd)
                     if let src = sourceFormat {
-                        converter = AVAudioConverter(from: src, to: mixer.format)
+                        converter = AVAudioConverter(from: src, to: targetFormat)
                         eprint("System source format: \(src.sampleRate) Hz, \(src.channelCount) ch")
                     }
                 }
@@ -422,9 +443,9 @@ final class SystemCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unchecke
                 let inFrames = input.frameLength
                 if inFrames == 0 { return }
 
-                let ratio = mixer.format.sampleRate / src.sampleRate
+                let ratio = targetFormat.sampleRate / src.sampleRate
                 let outCap = AVAudioFrameCount(ceil(Double(inFrames) * ratio)) + 1024
-                guard let outBuf = AVAudioPCMBuffer(pcmFormat: mixer.format,
+                guard let outBuf = AVAudioPCMBuffer(pcmFormat: targetFormat,
                                                     frameCapacity: outCap) else { return }
 
                 var err: NSError?
@@ -443,7 +464,7 @@ final class SystemCapture: NSObject, SCStreamDelegate, SCStreamOutput, @unchecke
                 guard let ch = outBuf.int16ChannelData?[0] else { return }
                 let n = Int(outBuf.frameLength)
                 let samples = Array(UnsafeBufferPointer(start: ch, count: n))
-                mixer.feedSystem(samples)
+                sink(samples)
             }
         } catch {
             eprint("system withAudioBufferList error: \(error.localizedDescription)")
@@ -591,22 +612,63 @@ final class MicCapture: @unchecked Sendable {
 // MARK: - Main
 
 let args = parseArgs()
-let mixer: Mixer
-do {
-    mixer = try Mixer(outputPath: args.output,
-                      sampleRate: args.sampleRate,
-                      channels: args.channels,
-                      expectsSystem: args.captureSystem,
-                      expectsMic: args.micDeviceName != nil)
-} catch {
-    eprint("Failed to open output \(args.output): \(error.localizedDescription)")
+
+// Build the target audio format once; SystemCapture / MicCapture all
+// downsample to this.
+guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                        sampleRate: args.sampleRate,
+                                        channels: args.channels,
+                                        interleaved: true) else {
+    eprint("Failed to build target AVAudioFormat")
     exit(1)
 }
 
-let systemCapture: SystemCapture? = args.captureSystem ? SystemCapture(mixer: mixer) : nil
-let micCapture: MicCapture? = (args.micDeviceName.map { name in
-    MicCapture(mixer: mixer, deviceName: name)
-})
+// Mixer + Mic exist only in record mode. Meter mode is system-audio-only
+// and writes raw PCM straight to stdout for the UI to read.
+let mixer: Mixer?
+let systemCapture: SystemCapture?
+let micCapture: MicCapture?
+
+if args.meterMode {
+    mixer = nil
+    micCapture = nil
+    // SCK → stdout. We use Darwin.write directly so partial writes are
+    // handled and the FileHandle isn't fighting macOS over stdout buffering.
+    let stdoutFD: Int32 = 1
+    systemCapture = SystemCapture(targetFormat: targetFormat) { samples in
+        samples.withUnsafeBytes { rawBuf in
+            var remaining = rawBuf.count
+            var ptr = rawBuf.baseAddress!
+            while remaining > 0 {
+                let n = Darwin.write(stdoutFD, ptr, remaining)
+                if n <= 0 { return }   // pipe closed; consumer went away
+                remaining -= n
+                ptr = ptr.advanced(by: n)
+            }
+        }
+    }
+    eprint("Meter mode — SCK PCM to stdout at \(Int(args.sampleRate)) Hz mono int16")
+} else {
+    guard let outPath = args.output else {
+        eprint("Internal error: record mode without --output")
+        exit(2)
+    }
+    do {
+        let m = try Mixer(outputPath: outPath,
+                          sampleRate: args.sampleRate,
+                          channels: args.channels,
+                          expectsSystem: args.captureSystem,
+                          expectsMic: args.micDeviceName != nil)
+        mixer = m
+        systemCapture = args.captureSystem
+            ? SystemCapture(targetFormat: targetFormat, sink: m.feedSystem)
+            : nil
+        micCapture = args.micDeviceName.map { MicCapture(mixer: m, deviceName: $0) }
+    } catch {
+        eprint("Failed to open output \(args.output ?? "?"): \(error.localizedDescription)")
+        exit(1)
+    }
+}
 
 final class AtomicFlag: @unchecked Sendable {
     private var flag = false
@@ -626,8 +688,11 @@ func requestStop(reason: String) {
     Task {
         if let s = systemCapture { await s.stop() }
         micCapture?.stop()
-        mixer.finalize()
-        eprint("Capture stopped — system buffers: \(systemCapture?.buffersReceived ?? 0), mic buffers: \(micCapture?.buffersReceived ?? 0), frames written: \(mixer.framesWritten)")
+        mixer?.finalize()
+        let sysN = systemCapture?.buffersReceived ?? 0
+        let micN = micCapture?.buffersReceived ?? 0
+        let written = mixer?.framesWritten ?? 0
+        eprint("Capture stopped — system buffers: \(sysN), mic buffers: \(micN), frames written: \(written)")
         Foundation.exit(0)
     }
 }

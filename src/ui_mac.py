@@ -27,9 +27,10 @@ from PyQt6.QtWidgets import (
     QFrame,
     QComboBox,
     QProgressBar,
+    QFileDialog,
 )
 
-from audio_meter import make_avfoundation_meter
+from audio_meter import make_avfoundation_meter, make_sck_meter
 
 def _setup_macos_app():
     """Register as a proper macOS GUI app with dock icon."""
@@ -206,8 +207,10 @@ class AloeScribeWindow(QMainWindow):
         on_quit: Callable,
         list_sources: Callable = None,
         on_device_change: Callable = None,
+        on_output_dir_change: Callable = None,
         current_mic: str = "",
         current_system: str = "",
+        current_output_dir: str = "",
     ):
         super().__init__()
         self.on_start_recording = on_start_recording
@@ -215,8 +218,10 @@ class AloeScribeWindow(QMainWindow):
         self.on_quit = on_quit
         self._list_sources = list_sources
         self._on_device_change = on_device_change
+        self._on_output_dir_change = on_output_dir_change
         self._selected_mic = current_mic
         self._selected_system = current_system
+        self._output_dir = current_output_dir
 
         self._current_meeting = None
         self._state = "idle"
@@ -347,22 +352,22 @@ class AloeScribeWindow(QMainWindow):
         self._content_layout.addWidget(self._sys_level_bar)
 
     def _start_meters(self):
-        """Spawn ffmpeg readers for the current mic + system avfoundation indices."""
+        """Spawn meter readers for mic (avfoundation/ffmpeg) and system
+        (ScreenCaptureKit via the Swift helper). The system meter no longer
+        relies on BlackHole — it taps directly into the same path the recorder
+        uses, so the bar moves whenever audio is actually being captured."""
         if not self.isVisible():
             return
         self._stop_meters()
 
-        # Resolve the dropdown selection (a device name) to an avfoundation index.
-        # Reuse the recorder_mac helpers so meters use the same device the recorder will.
         try:
-            from recorder_mac import _resolve_device, _find_default_mic, _find_blackhole
+            from recorder_mac import _resolve_device, _find_default_mic, _helper_path
         except Exception as e:
             log.warning(f"Cannot import recorder_mac helpers: {e}")
             return
 
+        # Mic side: still avfoundation/ffmpeg.
         mic_idx = _resolve_device(self._selected_mic) or _find_default_mic()
-        sys_idx = _resolve_device(self._selected_system) or _find_blackhole() or ""
-
         if mic_idx:
             self._mic_meter = make_avfoundation_meter(
                 mic_idx,
@@ -371,9 +376,15 @@ class AloeScribeWindow(QMainWindow):
             if self._mic_meter and not self._mic_meter.start():
                 self._mic_meter = None
 
-        if sys_idx:
-            self._sys_meter = make_avfoundation_meter(
-                sys_idx,
+        # System side: SCK helper in --meter mode, unless the user has
+        # explicitly turned system audio off.
+        sys_off = (self._selected_system or "").strip().lower() in {
+            "off", "none", "false", "0", "no", "disabled",
+        }
+        if not sys_off:
+            helper = str(_helper_path())
+            self._sys_meter = make_sck_meter(
+                helper,
                 lambda lvl: self._signals.sys_level.emit(lvl),
             )
             if self._sys_meter and not self._sys_meter.start():
@@ -452,6 +463,9 @@ class AloeScribeWindow(QMainWindow):
         # Live level meters so the user can verify audio is flowing
         self._build_level_bars()
 
+        # Output folder picker
+        self._build_output_folder_row()
+
         btn = QPushButton("Start Recording Now")
         btn.setObjectName("btnStart")
         btn.clicked.connect(self._on_manual_start)
@@ -491,18 +505,27 @@ class AloeScribeWindow(QMainWindow):
         )
         self._content_layout.addWidget(mic_combo)
 
-        # System audio dropdown
-        sys_label = QLabel("SPEAKER / SYSTEM AUDIO")
+        # System audio dropdown — explicit on/off rather than the legacy
+        # "Auto-detect / BlackHole" device picker. SCK always captures the
+        # full desktop mix when on; off is for in-person meetings where the
+        # mic already picks up everyone in the room.
+        sys_label = QLabel("SYSTEM AUDIO")
         sys_label.setObjectName("deviceLabel")
         self._content_layout.addWidget(sys_label)
 
         sys_combo = QComboBox()
-        sys_combo.addItem("Auto-detect", "")
-        active_sys_idx = 0
-        for i, (dev_id, display) in enumerate(systems):
+        sys_options = [
+            ("system", "On — Capture system audio"),
+            ("off", "Off — Mic only (in-person)"),
+        ]
+        # Default to "On" unless config explicitly says off.
+        current = (self._selected_system or "").strip().lower()
+        if current in {"off", "none", "false", "0", "no", "disabled"}:
+            active_sys_idx = 1
+        else:
+            active_sys_idx = 0
+        for dev_id, display in sys_options:
             sys_combo.addItem(display, dev_id)
-            if dev_id == self._selected_system:
-                active_sys_idx = i + 1
         sys_combo.setCurrentIndex(active_sys_idx)
         sys_combo.currentIndexChanged.connect(
             lambda idx, c=sys_combo: self._on_sys_changed(c)
@@ -520,6 +543,60 @@ class AloeScribeWindow(QMainWindow):
         if self._on_device_change:
             self._on_device_change(self._selected_mic, self._selected_system)
         self._restart_meters_if_active()
+
+    # ------------------------------------------------------------------ #
+    # Output folder picker                                                #
+    # ------------------------------------------------------------------ #
+
+    def _build_output_folder_row(self):
+        """Show the current transcript destination and a Choose… button."""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._content_layout.addWidget(sep)
+
+        label = QLabel("SAVE TRANSCRIPTS TO")
+        label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(label)
+
+        row = QHBoxLayout()
+        # Pretty-print: shrink $HOME to ~
+        display = self._output_dir or "~/meetings"
+        home = str(Path.home())
+        if display.startswith(home):
+            display = "~" + display[len(home):]
+        self._output_dir_label = QLabel(display)
+        self._output_dir_label.setObjectName("meetingTime")
+        self._output_dir_label.setWordWrap(True)
+        row.addWidget(self._output_dir_label, 1)
+
+        choose = QPushButton("Choose…")
+        choose.setObjectName("btnSkip")
+        choose.setMaximumWidth(80)
+        choose.clicked.connect(self._choose_output_folder)
+        row.addWidget(choose)
+
+        self._content_layout.addLayout(row)
+
+    def _choose_output_folder(self):
+        start = Path(self._output_dir or "~/meetings").expanduser()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Choose where Aloe Scribe saves transcripts",
+            str(start),
+        )
+        if not chosen:
+            return
+        self._output_dir = chosen
+        # Update the label without re-rendering the whole idle view.
+        display = chosen
+        home = str(Path.home())
+        if display.startswith(home):
+            display = "~" + display[len(home):]
+        if getattr(self, "_output_dir_label", None) is not None:
+            self._output_dir_label.setText(display)
+        if self._on_output_dir_change:
+            self._on_output_dir_change(chosen)
 
     def _render_recording(self, meeting):
         self._state = "recording"
@@ -733,14 +810,17 @@ class AloeScribeApp:
 
     def __init__(self, on_start_recording, on_stop_recording, on_quit,
                  list_sources=None, on_device_change=None,
-                 current_mic="", current_system=""):
+                 on_output_dir_change=None,
+                 current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording
         self._on_quit = on_quit
         self._list_sources = list_sources
         self._on_device_change = on_device_change
+        self._on_output_dir_change = on_output_dir_change
         self._current_mic = current_mic
         self._current_system = current_system
+        self._current_output_dir = current_output_dir
         self._app: Optional[QApplication] = None
         self._window: Optional[AloeScribeWindow] = None
         self._tray: Optional[QSystemTrayIcon] = None
@@ -774,8 +854,10 @@ class AloeScribeApp:
             on_quit=self._on_quit,
             list_sources=self._list_sources,
             on_device_change=self._on_device_change,
+            on_output_dir_change=self._on_output_dir_change,
             current_mic=self._current_mic,
             current_system=self._current_system,
+            current_output_dir=self._current_output_dir,
         )
 
         # System tray

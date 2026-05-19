@@ -21,11 +21,23 @@ poll_interval_minutes = 5
 mic_source = ""
 system_source = ""  # Linux: .monitor source | macOS: BlackHole device name
 
+[transcriber]
+# Which transcription backend to use:
+#   "parakeet" — NVIDIA Parakeet TDT via parakeet-mlx (Apple Silicon).
+#                Faster, less prone to silence-time hallucinations, better
+#                accuracy on technical English. ~700 MB model downloaded
+#                from HuggingFace on first run.
+#   "whisper"  — whisper.cpp via the binary in [whisper] below. Multilingual.
+backend = "parakeet"
+
+# HuggingFace model id used when backend = "parakeet"
+parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
+
 [whisper]
 # Path to your whisper.cpp binary
 # Install: https://github.com/ggerganov/whisper.cpp
 # macOS: build with Metal for GPU acceleration: cmake -B build -DWHISPER_METAL=ON
-binary_path = "~/whisper.cpp/build/bin/whisper-cli"
+binary_path = "/Users/vincemorello/whisper.cpp/build/bin/whisper-cli"
 
 # Model to use — larger = more accurate but slower
 # tiny, base, small, medium, large-v3
@@ -33,7 +45,7 @@ model = "small"
 
 # Path to whisper model file
 # Download with: bash /path/to/whisper.cpp/models/download-ggml-model.sh small
-model_path = "~/whisper.cpp/models/ggml-small.bin"
+model_path = "/Users/vincemorello/whisper.cpp/models/ggml-large-v3-turbo.bin"
 
 [output]
 # Where transcripts land locally before syncing

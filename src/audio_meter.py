@@ -140,6 +140,21 @@ def make_avfoundation_meter(device_index: str, on_level: Callable[[float], None]
     return AudioMeter(cmd, on_level)
 
 
+def make_sck_meter(helper_path: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
+    """macOS: read ScreenCaptureKit system audio via the aloe-audio-capture
+    helper in --meter mode. The helper writes raw s16le mono 16 kHz PCM to
+    stdout — same format the AudioMeter base class expects.
+
+    Returns None if the helper binary isn't available so callers can fall back
+    to no system meter gracefully.
+    """
+    import os
+    if not helper_path or not os.access(helper_path, os.X_OK):
+        return None
+    cmd = [helper_path, "--meter", "--sample-rate", str(AudioMeter.RATE)]
+    return AudioMeter(cmd, on_level)
+
+
 def make_meter_for_platform(source: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
     """Convenience: pick the right factory for the current platform.
 

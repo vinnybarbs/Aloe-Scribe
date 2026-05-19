@@ -25,6 +25,7 @@ OPTIONS = {
         "recorder_mac",
         "recorder",
         "transcriber",
+        "transcriber_parakeet",
         "syncer",
         "notifications",
         "ui_mac",
@@ -37,6 +38,12 @@ OPTIONS = {
         "objc",
         "AppKit",
         "Foundation",
+        # Parakeet TDT backend (Apple Silicon). Pulls in mlx as a transitive
+        # dependency — both need to be bundled so the frozen .app can
+        # import them without the venv on the user's machine.
+        "parakeet_mlx",
+        "mlx",
+        "huggingface_hub",
     ],
     "plist": {
         "CFBundleName": "Aloe Scribe",

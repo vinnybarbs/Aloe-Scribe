@@ -56,6 +56,7 @@ if SRC.exists():
 
 from meeting import Meeting
 from transcriber import Transcriber
+from transcriber_parakeet import ParakeetTranscriber
 from syncer import Syncer
 
 if sys.platform == "darwin":
@@ -100,10 +101,19 @@ class AloeScribe:
             system_source=config["audio"].get("system_source", ""),
         )
 
-        self.transcriber = Transcriber(
-            binary_path=config["whisper"]["binary_path"],
-            model_path=config["whisper"]["model_path"],
-        )
+        backend = config.get("transcriber", {}).get("backend", "whisper").lower()
+        if backend == "parakeet":
+            model_id = config.get("transcriber", {}).get(
+                "parakeet_model", ParakeetTranscriber.DEFAULT_MODEL
+            )
+            log.info(f"Transcriber backend: parakeet ({model_id})")
+            self.transcriber = ParakeetTranscriber(model=model_id)
+        else:
+            log.info("Transcriber backend: whisper.cpp")
+            self.transcriber = Transcriber(
+                binary_path=config["whisper"]["binary_path"],
+                model_path=config["whisper"]["model_path"],
+            )
 
         self.syncer = Syncer(
             rclone_remote=config["sync"]["rclone_remote"],
@@ -117,8 +127,10 @@ class AloeScribe:
             on_quit=self._quit,
             list_sources=list_sources,
             on_device_change=self._on_device_change,
+            on_output_dir_change=self._on_output_dir_change,
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
+            current_output_dir=str(self.output_dir),
         )
 
     # ------------------------------------------------------------------ #
@@ -164,6 +176,26 @@ class AloeScribe:
         config_text = re.sub(
             r'system_source\s*=\s*"[^"]*"',
             f'system_source = "{system_source}"',
+            config_text,
+        )
+        CONFIG_PATH.write_text(config_text)
+
+    def _on_output_dir_change(self, new_dir: str):
+        """Called by UI when the user picks a new transcript destination."""
+        path = Path(new_dir).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        self.output_dir = path
+        log.info(f"Output directory updated → {self.output_dir}")
+
+        # Persist to config.toml. We store the user's literal value so a path
+        # under their home keeps its ~/ prefix if that's what they typed.
+        import re
+        config_text = CONFIG_PATH.read_text()
+        # Escape for regex replacement value
+        escaped = new_dir.replace("\\", "\\\\").replace('"', '\\"')
+        config_text = re.sub(
+            r'local_dir\s*=\s*"[^"]*"',
+            f'local_dir = "{escaped}"',
             config_text,
         )
         CONFIG_PATH.write_text(config_text)
