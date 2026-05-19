@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -243,12 +244,25 @@ class Recorder:
             cmd += ["--no-system"]
 
         log.info(f"Starting recorder: {' '.join(cmd)}")
+        # Helper stderr goes to a dedicated log file so we can see what SCK +
+        # mixer are doing without polluting (or being lost in) the main app
+        # log's Python message stream.
+        helper_log = Path("/tmp/aloe-helper.log")
+        try:
+            self._helper_stderr = open(helper_log, "ab")
+            self._helper_stderr.write(
+                f"\n========== {datetime.now().isoformat(timespec='seconds')} : {' '.join(cmd)} ==========\n".encode()
+            )
+            self._helper_stderr.flush()
+        except Exception as e:
+            log.warning(f"Could not open helper log {helper_log}: {e}")
+            self._helper_stderr = subprocess.DEVNULL
         try:
             self._process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=self._helper_stderr,
             )
         except FileNotFoundError:
             log.error(f"Helper binary missing: {helper}")
@@ -260,20 +274,11 @@ class Recorder:
         # Give the helper ~0.5 s to fail (e.g. Screen Recording denied).
         time.sleep(0.5)
         if self._process.poll() is not None:
-            _, stderr = self._process.communicate()
-            err_text = stderr.decode(errors="replace") if stderr else ""
-            log.error(f"Helper exited immediately: {err_text}")
-            # Surface the two common TCC failure modes loudly.
-            if "Screen Recording" in err_text or "TCCs" in err_text:
-                log.error(
-                    "Grant Screen Recording access:\n"
-                    "  System Settings → Privacy & Security → Screen Recording → Aloe Scribe"
-                )
-            if "Microphone" in err_text or "microphone" in err_text:
-                log.error(
-                    "Grant Microphone access:\n"
-                    "  System Settings → Privacy & Security → Microphone → Aloe Scribe"
-                )
+            log.error(
+                "Helper exited immediately. Inspect /tmp/aloe-helper.log for the cause "
+                "(common: Screen Recording or Microphone permission denied — grant in "
+                "System Settings → Privacy & Security → {Screen Recording | Microphone})."
+            )
             self._process = None
             return False
         return True
@@ -300,6 +305,12 @@ class Recorder:
                 self._process.kill()
 
         self._process = None
+        # Close the helper-stderr log file (was opened in start()).
+        try:
+            if hasattr(self, "_helper_stderr") and hasattr(self._helper_stderr, "close"):
+                self._helper_stderr.close()
+        except Exception:
+            pass
         log.info(f"Recording saved: {self._output_path}")
         return self._output_path
 
