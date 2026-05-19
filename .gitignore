@@ -9,3 +9,4 @@ build/
 dist/
 *.egg-info/
 assets/AppIcon.icns
+bin/aloe-audio-capture
