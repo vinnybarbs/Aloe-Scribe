@@ -99,16 +99,22 @@ class NativeTray:
     def _apply_icon(self, path: Path):
         if not path.exists():
             log.warning(f"NativeTray: icon not found at {path}")
+            self._item.button().setTitle_("🌿")
             return
         image = NSImage.alloc().initWithContentsOfFile_(str(path))
         if image is None:
             log.warning(f"NativeTray: NSImage failed to load {path}")
+            self._item.button().setTitle_("🌿")
             return
         image.setSize_((_MENU_BAR_ICON_PT, _MENU_BAR_ICON_PT))
         # We keep the colored leaf rather than tinting it as a template;
         # the user explicitly wants the green visible at a glance.
         image.setTemplate_(False)
         self._item.button().setImage_(image)
+        # Belt-and-braces fallback: if for some reason macOS doesn't render
+        # the image (notch overflow, weird Tahoe filtering), the emoji is
+        # still visible. setImage + setTitle both showing is fine.
+        self._item.button().setTitle_("🌿")
 
     def _rebuild_menu(self):
         menu = NSMenu.alloc().init()
