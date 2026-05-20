@@ -99,6 +99,8 @@ class NativeTray:
     def _apply_icon(self, path: Path):
         if not path.exists():
             log.warning(f"NativeTray: icon not found at {path}")
+            # Last-resort visible fallback so the user can still find the
+            # status item even if the .png is missing.
             self._item.button().setTitle_("🌿")
             return
         image = NSImage.alloc().initWithContentsOfFile_(str(path))
@@ -107,14 +109,14 @@ class NativeTray:
             self._item.button().setTitle_("🌿")
             return
         image.setSize_((_MENU_BAR_ICON_PT, _MENU_BAR_ICON_PT))
-        # We keep the colored leaf rather than tinting it as a template;
-        # the user explicitly wants the green visible at a glance.
+        # Keep the colored leaf rather than tinting it as a template — the
+        # green is visible at a glance, which is the whole point of a tray
+        # icon for "is my recorder alive."
         image.setTemplate_(False)
         self._item.button().setImage_(image)
-        # Belt-and-braces fallback: if for some reason macOS doesn't render
-        # the image (notch overflow, weird Tahoe filtering), the emoji is
-        # still visible. setImage + setTitle both showing is fine.
-        self._item.button().setTitle_("🌿")
+        # Clear any stale title so we don't render the image AND a leaf
+        # emoji side-by-side (looks like two separate tray items).
+        self._item.button().setTitle_("")
 
     def _rebuild_menu(self):
         menu = NSMenu.alloc().init()

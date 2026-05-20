@@ -473,6 +473,11 @@ class AloeScribeWindow(QMainWindow):
         btn = QPushButton("Start Recording Now")
         btn.setObjectName("btnStart")
         btn.clicked.connect(self._on_manual_start)
+        # Brief debounce: disable the Start button for 600 ms so a residual
+        # click from the previous screen (Done → idle) doesn't immediately
+        # fire a new recording at the same on-screen coordinate.
+        btn.setEnabled(False)
+        QTimer.singleShot(600, lambda b=btn: b.setEnabled(True))
         self._content_layout.addWidget(btn)
 
         self._update_status("● IDLE", "statusIdle")
@@ -706,11 +711,13 @@ class AloeScribeWindow(QMainWindow):
 
         self._update_status("● DONE", "statusDone")
 
-        # If we were waiting to quit after transcription, do that now
+        # If we were waiting to quit after transcription, do that now.
+        # Otherwise wait for the user to explicitly click Done — the previous
+        # 10s auto-flip back to idle was firing a fresh Start button right
+        # where the user was still clicking, causing accidental new
+        # recordings.
         if self._quit_after_transcribe:
             QTimer.singleShot(3000, self._signals.set_idle.emit)
-        else:
-            QTimer.singleShot(10000, self._signals.set_idle.emit)
 
     # ------------------------------------------------------------------ #
     # Public state setters (thread-safe via signals)                       #
