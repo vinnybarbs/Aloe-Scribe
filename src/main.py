@@ -23,13 +23,22 @@ for _p in ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/whisper.
 # When running from a py2app frozen bundle, mlx + parakeet_mlx + huggingface_hub
 # aren't bundled (mlx's namespace-package + native-lib layout breaks py2app's
 # modulegraph). Pull them from the project venv at runtime by prepending its
-# site-packages to sys.path. Hard-coded to this machine — the .app is a
-# personal build, not for distribution.
+# site-packages to sys.path. We locate the venv by:
+#   1. $ALOE_SCRIBE_VENV   (explicit override — recommended for CI/dev)
+#   2. Same-named .venv beside the bundle's parent project directory
+#   3. ~/aloe-scribe/.venv  (default install location from scripts/install-mac.sh)
 if getattr(sys, "frozen", False):
     from pathlib import Path as _Path
-    _venv_site = _Path("/Users/vincemorello/aloe-scribe/.venv/lib/python3.12/site-packages")
-    if _venv_site.is_dir() and str(_venv_site) not in sys.path:
-        sys.path.insert(0, str(_venv_site))
+    _candidates = []
+    if os.environ.get("ALOE_SCRIBE_VENV"):
+        _candidates.append(_Path(os.environ["ALOE_SCRIBE_VENV"]))
+    _candidates.append(_Path.home() / "aloe-scribe" / ".venv")
+    for _venv in _candidates:
+        _site = _venv / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+        if _site.is_dir():
+            if str(_site) not in sys.path:
+                sys.path.insert(0, str(_site))
+            break
 
 try:
     import tomllib

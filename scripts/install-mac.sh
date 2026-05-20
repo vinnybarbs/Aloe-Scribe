@@ -68,8 +68,10 @@ fi
     "pyobjc-framework-Cocoa>=10.0" \
     "pillow>=10.0.0" \
     "tomli>=2.0.0" \
-    "py2app>=0.28.0"
+    "py2app>=0.28.0" \
+    "parakeet-mlx>=0.1.0"
 echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
+echo "  parakeet-mlx installed (default transcription backend, Apple Silicon)"
 
 # -----------------------------------------------------------
 # 5. whisper.cpp with Metal
@@ -108,21 +110,26 @@ CONFIG="$PROJECT_DIR/config/config.toml"
 
 sed -i '' "s|binary_path = .*|binary_path = \"$WHISPER_DIR/build/bin/whisper-cli\"|" "$CONFIG"
 sed -i '' "s|model_path = .*|model_path = \"$MODEL_PATH\"|" "$CONFIG"
-echo "  Config updated with whisper paths"
+# Point local_dir to ~/meetings by default; user can change via the
+# folder picker in the app's idle screen.
+DEFAULT_OUTPUT="$HOME/meetings"
+mkdir -p "$DEFAULT_OUTPUT"
+sed -i '' "s|local_dir = .*|local_dir = \"$DEFAULT_OUTPUT\"|" "$CONFIG"
+echo "  Config updated with whisper paths + transcript dir ($DEFAULT_OUTPUT)"
 
 # -----------------------------------------------------------
-# 7. Build native .app bundle with py2app
+# 7. Build native .app bundle
 # -----------------------------------------------------------
-echo -e "${GREEN}[7/7]${NC} Building Aloe Scribe.app..."
+echo -e "${GREEN}[7/7]${NC} Building Aloe Scribe.app via scripts/build-app.sh..."
 
 cd "$PROJECT_DIR"
 
-# Clean ALL previous builds and caches
+# Clean previous builds and caches.
 rm -rf build dist *.egg-info .eggs
 rm -rf /Applications/Aloe\ Scribe.app
 find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
-# Generate .icns icon from PNG
+# Generate .icns icon from PNG (the .app bundle's dock + tray icon)
 ICON_SRC="$PROJECT_DIR/assets/icon.png"
 ICNS_OUT="$PROJECT_DIR/assets/AppIcon.icns"
 if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null && [ ! -f "$ICNS_OUT" ]; then
@@ -138,32 +145,12 @@ if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null && [ ! -f "$ICNS_OUT" ]; th
     rm -rf "$ICONSET"
 fi
 
-# Update setup.py to use .icns if it exists (only if not already set)
-if [ -f "$ICNS_OUT" ] && ! grep -q "iconfile" "$PROJECT_DIR/setup.py"; then
-    sed -i '' 's|"argv_emulation": False,|"argv_emulation": False, "iconfile": "assets/AppIcon.icns",|' "$PROJECT_DIR/setup.py"
-fi
-
-# Build the .app
-"$VENV_DIR/bin/python3" setup.py py2app 2>&1 | tail -5
-
-# py2app names the app after the script (main.app) — rename it
-if [ -d "dist/main.app" ]; then
-    mv "dist/main.app" "dist/Aloe Scribe.app"
-fi
-
-# Fix the CFBundleExecutable in the renamed app
-if [ -d "dist/Aloe Scribe.app" ]; then
-    mv "dist/Aloe Scribe.app/Contents/MacOS/main" "dist/Aloe Scribe.app/Contents/MacOS/Aloe Scribe" 2>/dev/null || true
-    # Update the plist to match
-    /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable 'Aloe Scribe'" "dist/Aloe Scribe.app/Contents/Info.plist" 2>/dev/null || true
-fi
-
-# Install to /Applications
-rm -rf "/Applications/Aloe Scribe.app"
-cp -R "dist/Aloe Scribe.app" "/Applications/Aloe Scribe.app"
-
-# Clear quarantine
-xattr -cr "/Applications/Aloe Scribe.app" 2>/dev/null || true
+# Delegate the actual build + code-signing + install to scripts/build-app.sh.
+# That script compiles the Swift audio helper, runs py2app with the right
+# excludes, signs everything with stable ad-hoc identifiers, and installs
+# to /Applications. Keeping the logic there means future rebuilds don't
+# have to re-run this whole install script.
+bash scripts/build-app.sh
 
 echo "  Installed to /Applications/Aloe Scribe.app"
 

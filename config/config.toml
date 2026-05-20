@@ -37,7 +37,7 @@ parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 # Path to your whisper.cpp binary
 # Install: https://github.com/ggerganov/whisper.cpp
 # macOS: build with Metal for GPU acceleration: cmake -B build -DWHISPER_METAL=ON
-binary_path = "/Users/vincemorello/whisper.cpp/build/bin/whisper-cli"
+binary_path = "~/whisper.cpp/build/bin/whisper-cli"
 
 # Model to use — larger = more accurate but slower
 # tiny, base, small, medium, large-v3
@@ -45,7 +45,7 @@ model = "small"
 
 # Path to whisper model file
 # Download with: bash /path/to/whisper.cpp/models/download-ggml-model.sh small
-model_path = "/Users/vincemorello/whisper.cpp/models/ggml-large-v3-turbo.bin"
+model_path = "~/whisper.cpp/models/ggml-large-v3-turbo.bin"
 
 [output]
 # Where transcripts land locally before syncing
