@@ -71,12 +71,16 @@ rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS/MacOS"
 mkdir -p "$CONTENTS/Resources"
 
-# Copy the real Python binary into the bundle so its realpath is inside
-# Aloe Scribe.app. The binary loads libpython3.12.dylib via an absolute
-# path, so no rpath surgery is needed.
-echo "Copying Python binary into bundle..."
-cp -L "$REAL_PYTHON" "$CONTENTS/MacOS/aloe-python"
-chmod +x "$CONTENTS/MacOS/aloe-python"
+# Copy the real Python binary into the bundle, but tuck it inside
+# Contents/Resources/python/ — NOT Contents/MacOS/. Anything in MacOS/
+# is treated by macOS as the bundle's main executable (or a sibling app),
+# which causes TCC to register the Python copy as a separate "aloe-python"
+# application alongside Aloe Scribe and split permission grants between
+# them. Tucked under Resources/ it stays unambiguously part of the bundle.
+echo "Copying Python binary into Contents/Resources/python/..."
+mkdir -p "$CONTENTS/Resources/python"
+cp -L "$REAL_PYTHON" "$CONTENTS/Resources/python/aloe-python"
+chmod +x "$CONTENTS/Resources/python/aloe-python"
 
 # Compile the Swift launcher that will be the bundle's main executable.
 # A native Mach-O signed with the bundle's identity is what macOS Tahoe
@@ -154,13 +158,11 @@ if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null; then
     iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns" 2>/dev/null && rm -rf "$ICONSET"
 fi
 
-# 4. Code-sign the embedded python with the SAME identifier as the bundle
-#    so macOS treats it as part of the app, not a separate app named
-#    "aloe-python". TCC was creating a duplicate "aloe-python" entry under
-#    Screen Recording / Microphone, which is what the menu bar status item
-#    filter was tripping on.
+# 4. Code-sign the embedded python (now in Contents/Resources/python/) with
+#    the same identifier as the bundle so all permission grants attribute
+#    to a single "Aloe Scribe" entity in TCC.
 echo "Signing embedded python (as ${APP_IDENTIFIER})..."
-codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$CONTENTS/MacOS/aloe-python"
+codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$CONTENTS/Resources/python/aloe-python"
 
 echo "Signing .app bundle (${APP_IDENTIFIER})..."
 codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$APP_DIR"
