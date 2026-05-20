@@ -21,21 +21,10 @@ let PYTHONPATH_VALUE = "__PYTHONPATH__"
 let PROJECT_DIR = "__PROJECT_DIR__"
 let MAIN_PY = "\(PROJECT_DIR)/src/main.py"
 
-// The Python interpreter lives in Contents/Resources/python/ — NOT
-// Contents/MacOS/. macOS only treats Contents/MacOS/ binaries as the
-// bundle's main executable; any other binary in there gets registered
-// as its own separate app in TCC/Privacy, which led to a phantom
-// "aloe-python" entry in Screen Recording and tripped the menu bar
-// status item filter.
+// The Python interpreter lives next to this launcher inside the bundle.
 let argv0 = CommandLine.arguments[0]
-let bundleContents = URL(fileURLWithPath: argv0)
-    .deletingLastPathComponent()   // Contents/MacOS/
-    .deletingLastPathComponent()   // Contents/
-let pythonExec = bundleContents
-    .appendingPathComponent("Resources")
-    .appendingPathComponent("python")
-    .appendingPathComponent("aloe-python")
-    .path
+let macOSDir = URL(fileURLWithPath: argv0).deletingLastPathComponent()
+let pythonExec = macOSDir.appendingPathComponent("aloe-python").path
 
 setenv("PYTHONHOME", PYTHON_HOME, 1)
 setenv("PYTHONPATH", PYTHONPATH_VALUE, 1)
