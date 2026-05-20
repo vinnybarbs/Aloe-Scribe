@@ -41,11 +41,15 @@ class AudioMeter:
         if not self.cmd:
             return False
         try:
+            # We pipe stdin (instead of /dev/null) because the aloe-audio-capture
+            # helper interprets stdin EOF as "stop" — a closed stdin would kill
+            # the meter the instant it starts. Holding the pipe open here keeps
+            # the helper alive for the lifetime of this AudioMeter.
             self._proc = subprocess.Popen(
                 self.cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
             )
         except FileNotFoundError:
             log.warning(f"Command not found: {self.cmd[0]} — meter disabled")
@@ -64,6 +68,13 @@ class AudioMeter:
         proc = self._proc
         self._proc = None
         if proc is not None:
+            # Close stdin first so helpers that watch for EOF (e.g. the
+            # aloe-audio-capture meter mode) can shut down cleanly.
+            try:
+                if proc.stdin is not None and not proc.stdin.closed:
+                    proc.stdin.close()
+            except Exception:
+                pass
             try:
                 proc.terminate()
                 proc.wait(timeout=1)

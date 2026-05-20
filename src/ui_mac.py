@@ -751,9 +751,16 @@ class AloeScribeWindow(QMainWindow):
         threading.Thread(target=self.on_stop_recording, daemon=True).start()
 
     def _open_folder(self):
-        meetings_dir = Path("~/meetings").expanduser()
-        meetings_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(["open", str(meetings_dir)])
+        # Open the user's configured transcript destination, falling back to
+        # ~/meetings if the path is empty or invalid.
+        path = Path(self._output_dir).expanduser() if self._output_dir else Path("~/meetings").expanduser()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            log.warning(f"Could not create {path}: {e}")
+            path = Path("~/meetings").expanduser()
+            path.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(["open", str(path)])
 
     def closeEvent(self, event):
         """Hide to tray instead of quitting."""
@@ -937,9 +944,16 @@ class AloeScribeApp:
         self._window.activateWindow()
 
     def _open_folder(self):
-        meetings_dir = Path("~/meetings").expanduser()
-        meetings_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(["open", str(meetings_dir)])
+        # Defer to the window's open-folder so we always honor the user's
+        # current transcript destination (which the folder picker mutates
+        # live on _output_dir).
+        if self._window is not None:
+            self._window._open_folder()
+            return
+        # Fallback if the window isn't up yet.
+        path = Path(self._current_output_dir).expanduser() if self._current_output_dir else Path("~/meetings").expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(["open", str(path)])
 
     def _quit(self):
         # If recording is in progress, stop + transcribe first, then quit.
