@@ -20,6 +20,17 @@ for _p in ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/whisper.
     if _p not in os.environ.get("PATH", ""):
         os.environ["PATH"] = _p + ":" + os.environ.get("PATH", "")
 
+# When running from a py2app frozen bundle, mlx + parakeet_mlx + huggingface_hub
+# aren't bundled (mlx's namespace-package + native-lib layout breaks py2app's
+# modulegraph). Pull them from the project venv at runtime by prepending its
+# site-packages to sys.path. Hard-coded to this machine — the .app is a
+# personal build, not for distribution.
+if getattr(sys, "frozen", False):
+    from pathlib import Path as _Path
+    _venv_site = _Path("/Users/vincemorello/aloe-scribe/.venv/lib/python3.12/site-packages")
+    if _venv_site.is_dir() and str(_venv_site) not in sys.path:
+        sys.path.insert(0, str(_venv_site))
+
 try:
     import tomllib
 except ModuleNotFoundError:
@@ -35,7 +46,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(str(LOG_FILE)),
+        # encoding="utf-8" because py2app's bundled Python defaults to ASCII
+        # for FileHandler, which trips on em-dashes etc. in log messages.
+        logging.FileHandler(str(LOG_FILE), encoding="utf-8"),
     ],
 )
 log = logging.getLogger("aloe-scribe")

@@ -30,6 +30,7 @@ OPTIONS = {
         "notifications",
         "ui_mac",
         "ui",
+        "native_tray",
         "tomli",
     ],
     "packages": [
@@ -38,12 +39,21 @@ OPTIONS = {
         "objc",
         "AppKit",
         "Foundation",
-        # Parakeet TDT backend (Apple Silicon). Pulls in mlx as a transitive
-        # dependency — both need to be bundled so the frozen .app can
-        # import them without the venv on the user's machine.
+    ],
+    # mlx is a namespace package with native .so files that py2app's
+    # modulegraph can't introspect cleanly. parakeet_mlx imports mlx, and
+    # huggingface_hub pulls in huge transitive deps that also break the
+    # bundle. Exclude all three from the frozen build; main.py prepends the
+    # project venv's site-packages to sys.path at startup so they import
+    # from there at runtime.
+    "excludes": [
         "parakeet_mlx",
         "mlx",
         "huggingface_hub",
+        "transformers",
+        "torch",
+        "tokenizers",
+        "safetensors",
     ],
     "plist": {
         "CFBundleName": "Aloe Scribe",
