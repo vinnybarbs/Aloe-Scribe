@@ -873,9 +873,11 @@ class AloeScribeApp:
         self._window._tray = self._tray
         self._window._app_ref = self
 
-        # Register tray for notifications
+        # NativeTray doesn't expose a showMessage hook — notifications.py
+        # will fall through to osascript's `display notification` path,
+        # which is what we want on macOS anyway.
         import notifications
-        notifications.set_tray_icon(self._tray)
+        notifications.set_tray_icon(None)
 
         # Re-activate on dock icon click
         self._app.applicationStateChanged.connect(self._on_app_state_changed)
@@ -888,62 +890,43 @@ class AloeScribeApp:
         sys.exit(self._app.exec())
 
     def _setup_tray(self):
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            log.warning("System tray not available — skipping tray icon")
-            return
-        # Prefer the on-disk icon.png — macOS's menu-bar drawing chokes on
-        # the procedural QPixmap (which renders fine as a dock icon but ends
-        # up invisible as a status item). PNG with alpha just works.
-        icon_path = None
+        # We bypass Qt's QSystemTrayIcon — it silently fails to draw on
+        # macOS Tahoe even when isVisible() reports True — and go straight
+        # to NSStatusItem via PyObjC. See src/native_tray.py.
         if getattr(sys, "frozen", False):
             icon_path = Path(sys.executable).parent.parent / "Resources" / "assets" / "icon.png"
         else:
             icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
-        if icon_path and icon_path.exists():
-            icon = QIcon(str(icon_path))
-        else:
-            icon = _make_leaf_icon()
-        if icon.isNull():
-            log.warning("Tray icon is null — menu bar status item may not appear")
-        self._tray = QSystemTrayIcon(icon, self._app)
-        self._tray.setToolTip("Aloe Scribe")
-        self._tray.activated.connect(self._on_tray_activated)
-        self._update_tray_menu()
-        self._tray.show()
-        log.info(f"Tray icon: visible={self._tray.isVisible()}, icon_null={self._tray.icon().isNull()}, src={icon_path}")
+        try:
+            from native_tray import NativeTray
+        except Exception as e:
+            log.warning(f"Could not import NativeTray: {e}")
+            self._tray = None
+            return
+        self._tray = NativeTray(
+            icon_path=icon_path,
+            on_show=self._show_window,
+            on_open_folder=self._open_folder,
+            on_quit=self._quit,
+            on_toggle=self._toggle_window,
+        )
 
     def _update_tray_menu(self):
-        menu = QMenu()
-
-        # Status header
+        # The NativeTray rebuilds its own NSMenu whenever the status text
+        # changes; we just feed it the current state string.
+        if self._tray is None:
+            return
         status_map = {
             "idle": "Aloe Scribe — Idle",
-            "recording": "Recording...",
-            "processing": "Transcribing...",
+            "recording": "Recording…",
+            "processing": "Transcribing…",
             "done": "Done — transcript saved",
         }
         state = self._window._state if self._window else "idle"
-        header = menu.addAction(status_map.get(state, "Aloe Scribe"))
-        header.setEnabled(False)
-
-        menu.addSeparator()
-
-        show_action = menu.addAction("Show Window")
-        show_action.triggered.connect(self._show_window)
-
-        folder_action = menu.addAction("Open Meetings Folder")
-        folder_action.triggered.connect(self._open_folder)
-
-        menu.addSeparator()
-
-        quit_action = menu.addAction("Quit Aloe Scribe")
-        quit_action.triggered.connect(self._quit)
-
-        self._tray.setContextMenu(menu)
-
-    def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self._toggle_window()
+        try:
+            self._tray.set_status_text(status_map.get(state, "Aloe Scribe"))
+        except Exception as e:
+            log.warning(f"tray update failed: {e}")
 
     def _on_app_state_changed(self, state):
         """Handle dock icon clicks — re-show window when app is activated."""
@@ -982,14 +965,13 @@ class AloeScribeApp:
             self._window._on_stop()
             return
         self._on_quit()
-        if self._tray:
-            self._tray.hide()
+        # NSStatusItem cleans itself up when the process exits; no explicit
+        # hide() is needed (and the legacy QSystemTrayIcon .hide() call would
+        # AttributeError against the new NativeTray).
         self._app.quit()
 
     def _final_quit(self):
         self._on_quit()
-        if self._tray:
-            self._tray.hide()
         if self._app:
             self._app.quit()
 
