@@ -323,7 +323,10 @@ class AloeScribeWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _build_level_bars(self):
-        """Add MIC LEVEL and SYSTEM AUDIO LEVEL bars to the current layout."""
+        """Add the MIC LEVEL bar to the current layout. We dropped the
+        SYSTEM AUDIO LEVEL bar because driving it requires a second SCK
+        stream that competes with the recorder's, and we couldn't get a
+        reliable picture without that conflict."""
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
@@ -339,17 +342,7 @@ class AloeScribeWindow(QMainWindow):
         self._mic_level_bar.setTextVisible(False)
         self._mic_level_bar.setFixedHeight(8)
         self._content_layout.addWidget(self._mic_level_bar)
-
-        sys_label = QLabel("SYSTEM AUDIO LEVEL")
-        sys_label.setObjectName("deviceLabel")
-        self._content_layout.addWidget(sys_label)
-
-        self._sys_level_bar = QProgressBar()
-        self._sys_level_bar.setRange(0, 1000)
-        self._sys_level_bar.setValue(0)
-        self._sys_level_bar.setTextVisible(False)
-        self._sys_level_bar.setFixedHeight(8)
-        self._content_layout.addWidget(self._sys_level_bar)
+        self._sys_level_bar = None
 
     def _start_meters(self):
         """Spawn meter readers for mic (avfoundation/ffmpeg) and system
@@ -376,23 +369,12 @@ class AloeScribeWindow(QMainWindow):
             if self._mic_meter and not self._mic_meter.start():
                 self._mic_meter = None
 
-        # System side: SCK helper in --meter mode, unless the user has
-        # explicitly turned system audio off — AND we're not currently
-        # recording. During recording the recording helper itself owns
-        # the single SCK system audio stream macOS allows per app
-        # identifier; starting a parallel meter SCStream interrupts the
-        # recording mid-capture.
-        sys_off = (self._selected_system or "").strip().lower() in {
-            "off", "none", "false", "0", "no", "disabled",
-        }
-        if not sys_off and self._state != "recording":
-            helper = str(_helper_path())
-            self._sys_meter = make_sck_meter(
-                helper,
-                lambda lvl: self._signals.sys_level.emit(lvl),
-            )
-            if self._sys_meter and not self._sys_meter.start():
-                self._sys_meter = None
+        # System audio meter is intentionally not started — it required a
+        # parallel SCStream that fought the recorder's own SCStream slot,
+        # and the result was unreliable. Mic meter alone is enough for
+        # "are we capturing something" confidence; system audio gets
+        # verified via the actual transcript on stop.
+        self._sys_meter = None
 
     def _stop_meters(self):
         for attr in ("_mic_meter", "_sys_meter"):
