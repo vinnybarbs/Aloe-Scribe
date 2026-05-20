@@ -540,7 +540,12 @@ class AloeScribeWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _build_output_folder_row(self):
-        """Show the current transcript destination and a Choose… button."""
+        """Show the current transcript destination and a Choose… button.
+
+        We display only the leaf folder name (not the full OneDrive path),
+        keep it on a single elided line, and put the full path on hover.
+        That keeps the row tidy regardless of how deep the user's
+        destination lives."""
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
@@ -551,23 +556,59 @@ class AloeScribeWindow(QMainWindow):
         self._content_layout.addWidget(label)
 
         row = QHBoxLayout()
-        # Pretty-print: shrink $HOME to ~
-        display = self._output_dir or "~/meetings"
-        home = str(Path.home())
-        if display.startswith(home):
-            display = "~" + display[len(home):]
-        self._output_dir_label = QLabel(display)
+        full_path = self._output_dir or "~/meetings"
+        short, tooltip = self._pretty_output_path(full_path)
+        self._output_dir_label = QLabel(short)
         self._output_dir_label.setObjectName("meetingTime")
-        self._output_dir_label.setWordWrap(True)
+        self._output_dir_label.setWordWrap(False)
+        self._output_dir_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._output_dir_label.setToolTip(tooltip)
+        # Elide on the right if even the short form runs out of room.
+        self._output_dir_label.setSizePolicy(
+            self._output_dir_label.sizePolicy().horizontalPolicy(),
+            self._output_dir_label.sizePolicy().verticalPolicy(),
+        )
         row.addWidget(self._output_dir_label, 1)
 
         choose = QPushButton("Choose…")
         choose.setObjectName("btnSkip")
-        choose.setMaximumWidth(80)
+        # No max width — let Qt size it to the text + button padding so the
+        # ellipsis character isn't clipped to "Choose..".
+        choose.setMinimumWidth(96)
         choose.clicked.connect(self._choose_output_folder)
-        row.addWidget(choose)
+        row.addWidget(choose, 0)
 
         self._content_layout.addLayout(row)
+
+    @staticmethod
+    def _pretty_output_path(full: str) -> tuple[str, str]:
+        """Turn '/Users/me/Library/CloudStorage/OneDrive-X/.../Foo' into
+        a short display string + full-path tooltip."""
+        path = Path(full).expanduser()
+        # Tooltip: shrink $HOME to ~ for readability.
+        home = str(Path.home())
+        full_str = str(path)
+        tooltip = "~" + full_str[len(home):] if full_str.startswith(home) else full_str
+        # Short label: parent · leaf if the parent looks meaningful, else
+        # just the leaf, else ~ if it IS the home dir.
+        if path == Path.home():
+            return "~", tooltip
+        leaf = path.name or full_str
+        parent = path.parent.name
+        # Surface "OneDrive-Foo" as the parent context when it's nested
+        # under CloudStorage. Otherwise show just the leaf — it's enough.
+        if "CloudStorage" in full_str and parent and parent != "CloudStorage":
+            # e.g. ".../OneDrive-Trace3/My Documents/AloeScribe Transcriptions"
+            # → "OneDrive · AloeScribe Transcriptions"
+            cloud_segment = next(
+                (p for p in path.parts if p.startswith("OneDrive")
+                 or p.startswith("GoogleDrive") or p.startswith("Dropbox")),
+                None,
+            )
+            if cloud_segment:
+                provider = cloud_segment.split("-", 1)[0]
+                return f"{provider} · {leaf}", tooltip
+        return leaf, tooltip
 
     def _choose_output_folder(self):
         start = Path(self._output_dir or "~/meetings").expanduser()
@@ -579,13 +620,12 @@ class AloeScribeWindow(QMainWindow):
         if not chosen:
             return
         self._output_dir = chosen
-        # Update the label without re-rendering the whole idle view.
-        display = chosen
-        home = str(Path.home())
-        if display.startswith(home):
-            display = "~" + display[len(home):]
+        # Re-pretty-print so the row stays compact and the tooltip shows
+        # the full path.
         if getattr(self, "_output_dir_label", None) is not None:
-            self._output_dir_label.setText(display)
+            short, tooltip = self._pretty_output_path(chosen)
+            self._output_dir_label.setText(short)
+            self._output_dir_label.setToolTip(tooltip)
         if self._on_output_dir_change:
             self._on_output_dir_change(chosen)
 
