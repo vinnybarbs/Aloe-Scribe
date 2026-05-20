@@ -796,10 +796,11 @@ class AloeScribeWindow(QMainWindow):
         # Force stylesheet refresh for the new object name
         self._status_label.style().unpolish(self._status_label)
         self._status_label.style().polish(self._status_label)
-        # Update tray icon and menu (we're on the main thread here via signals)
-        if hasattr(self, "_tray") and self._tray:
-            color = _STATE_COLORS.get(self._state, "#3A8C5A")
-            self._tray.setIcon(_make_leaf_icon(color))
+        # Refresh the tray menu so the header text ("Recording…", "Transcribing…",
+        # …) reflects the new state. We intentionally do NOT swap the tray
+        # icon per-state: state-colored procedural QPixmaps don't render as
+        # macOS menu-bar status items, so we keep the static PNG and surface
+        # state via the menu header instead.
         if hasattr(self, "_app_ref") and self._app_ref:
             self._app_ref._update_tray_menu()
 
@@ -887,11 +888,29 @@ class AloeScribeApp:
         sys.exit(self._app.exec())
 
     def _setup_tray(self):
-        self._tray = QSystemTrayIcon(_make_leaf_icon(), self._app)
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            log.warning("System tray not available — skipping tray icon")
+            return
+        # Prefer the on-disk icon.png — macOS's menu-bar drawing chokes on
+        # the procedural QPixmap (which renders fine as a dock icon but ends
+        # up invisible as a status item). PNG with alpha just works.
+        icon_path = None
+        if getattr(sys, "frozen", False):
+            icon_path = Path(sys.executable).parent.parent / "Resources" / "assets" / "icon.png"
+        else:
+            icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
+        if icon_path and icon_path.exists():
+            icon = QIcon(str(icon_path))
+        else:
+            icon = _make_leaf_icon()
+        if icon.isNull():
+            log.warning("Tray icon is null — menu bar status item may not appear")
+        self._tray = QSystemTrayIcon(icon, self._app)
         self._tray.setToolTip("Aloe Scribe")
         self._tray.activated.connect(self._on_tray_activated)
         self._update_tray_menu()
         self._tray.show()
+        log.info(f"Tray icon: visible={self._tray.isVisible()}, icon_null={self._tray.icon().isNull()}, src={icon_path}")
 
     def _update_tray_menu(self):
         menu = QMenu()
