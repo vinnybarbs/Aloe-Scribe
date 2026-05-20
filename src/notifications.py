@@ -41,16 +41,22 @@ def _send_linux(title: str, body: str):
 
 
 def _send_macos(title: str, body: str):
-    # Prefer QSystemTrayIcon if available (shows native notification)
-    if _tray_icon is not None:
-        try:
-            from PyQt6.QtWidgets import QSystemTrayIcon
-            _tray_icon.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, 5000)
-            return
-        except Exception:
-            pass
+    # Use NSUserNotification via PyObjC so the notification picks up the
+    # calling app's bundle icon (the Aloe Scribe leaf). osascript's
+    # `display notification` is attributed to Script Editor and shows a
+    # generic scroll icon — not what we want.
+    try:
+        from Foundation import NSUserNotification, NSUserNotificationCenter
+        notification = NSUserNotification.alloc().init()
+        notification.setTitle_(title)
+        notification.setInformativeText_(body)
+        center = NSUserNotificationCenter.defaultUserNotificationCenter()
+        center.deliverNotification_(notification)
+        return
+    except Exception as e:
+        log.warning(f"NSUserNotification failed: {e}")
 
-    # Fallback to osascript
+    # Fallback: osascript (will show generic icon, but at least notifies).
     try:
         subprocess.Popen([
             "osascript", "-e",
