@@ -78,18 +78,27 @@ echo "Copying Python binary into bundle..."
 cp -L "$REAL_PYTHON" "$CONTENTS/MacOS/aloe-python"
 chmod +x "$CONTENTS/MacOS/aloe-python"
 
-# Launcher (the bundle's CFBundleExecutable). Sets PYTHONHOME so the copied
-# Python finds the homebrew framework's stdlib, and PYTHONPATH so it picks
-# up the venv's site-packages (PyQt6, parakeet-mlx, mlx, etc.).
-cat > "$CONTENTS/MacOS/aloe-scribe" << LAUNCHER
-#!/bin/bash
-export PYTHONHOME="$PYTHON_HOME"
-export PYTHONPATH="$VENV_SITE"
-export ALOE_SCRIBE_PROJECT_DIR="$PROJECT_DIR"
-cd "$PROJECT_DIR"
-exec "\$(dirname "\$0")/aloe-python" "$PROJECT_DIR/src/main.py"
-LAUNCHER
+# Compile the Swift launcher that will be the bundle's main executable.
+# A native Mach-O signed with the bundle's identity is what macOS Tahoe
+# wants to allow NSStatusItem additions from the spawned Python child.
+# A bash script as CFBundleExecutable hits Tahoe's silent menu-bar filter.
+echo "Compiling Swift launcher..."
+LAUNCHER_SRC="$PROJECT_DIR/tools/aloe-launcher/main.swift"
+LAUNCHER_TEMPLATED="$(mktemp -t aloe-launcher).swift"
+sed \
+    -e "s|__PYTHON_HOME__|${PYTHON_HOME}|g" \
+    -e "s|__PYTHONPATH__|${VENV_SITE}|g" \
+    -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
+    "$LAUNCHER_SRC" > "$LAUNCHER_TEMPLATED"
+swiftc -O -target arm64-apple-macos13.0 \
+    -framework Foundation \
+    "$LAUNCHER_TEMPLATED" \
+    -o "$CONTENTS/MacOS/aloe-scribe"
+rm -f "$LAUNCHER_TEMPLATED"
 chmod +x "$CONTENTS/MacOS/aloe-scribe"
+# Sign the launcher with the same identifier as the bundle so macOS treats
+# it as the bundle's authentic executable.
+codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$CONTENTS/MacOS/aloe-scribe"
 
 # Info.plist. CFBundleName + DisplayName drive the application menu title.
 # CFBundleExecutable points at the launcher script, but because the launcher
