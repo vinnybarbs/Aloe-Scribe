@@ -377,11 +377,15 @@ class AloeScribeWindow(QMainWindow):
                 self._mic_meter = None
 
         # System side: SCK helper in --meter mode, unless the user has
-        # explicitly turned system audio off.
+        # explicitly turned system audio off — AND we're not currently
+        # recording. During recording the recording helper itself owns
+        # the single SCK system audio stream macOS allows per app
+        # identifier; starting a parallel meter SCStream interrupts the
+        # recording mid-capture.
         sys_off = (self._selected_system or "").strip().lower() in {
             "off", "none", "false", "0", "no", "disabled",
         }
-        if not sys_off:
+        if not sys_off and self._state != "recording":
             helper = str(_helper_path())
             self._sys_meter = make_sck_meter(
                 helper,
