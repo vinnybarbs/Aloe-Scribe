@@ -154,11 +154,13 @@ if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null; then
     iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns" 2>/dev/null && rm -rf "$ICONSET"
 fi
 
-# 4. Code-sign the embedded python with a stable identifier first, then the
-#    bundle. Using --deep would clobber the helper's identifier, so we sign
-#    each piece by hand.
-echo "Signing embedded python..."
-codesign --force --sign - --identifier com.aloescribe.python "$CONTENTS/MacOS/aloe-python"
+# 4. Code-sign the embedded python with the SAME identifier as the bundle
+#    so macOS treats it as part of the app, not a separate app named
+#    "aloe-python". TCC was creating a duplicate "aloe-python" entry under
+#    Screen Recording / Microphone, which is what the menu bar status item
+#    filter was tripping on.
+echo "Signing embedded python (as ${APP_IDENTIFIER})..."
+codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$CONTENTS/MacOS/aloe-python"
 
 echo "Signing .app bundle (${APP_IDENTIFIER})..."
 codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$APP_DIR"
