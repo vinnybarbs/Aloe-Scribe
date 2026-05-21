@@ -37,15 +37,12 @@ brew install ffmpeg rclone python@3.12 cmake git 2>/dev/null || true
 echo "  ffmpeg, rclone, python, cmake OK"
 
 # -----------------------------------------------------------
-# 3. BlackHole (optional — system audio capture)
+# 3. System audio capture
 # -----------------------------------------------------------
-echo -e "${GREEN}[3/7]${NC} BlackHole (optional)..."
-if brew list --cask blackhole-2ch &>/dev/null 2>&1; then
-    echo "  BlackHole installed — system audio capture available"
-else
-    echo "  BlackHole not installed — recording mic only (fine for most meetings)"
-    echo "  Your mic picks up your voice directly and call audio from speakers."
-fi
+echo -e "${GREEN}[3/7]${NC} System audio capture..."
+echo "  Uses ScreenCaptureKit (macOS 13+) — no BlackHole or Multi-Output"
+echo "  Device required. On first launch you'll be prompted for Screen"
+echo "  Recording permission (used only for audio; no video is captured)."
 
 # -----------------------------------------------------------
 # 4. Python venv + dependencies

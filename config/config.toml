@@ -14,12 +14,13 @@ notify_minutes_before = 4
 poll_interval_minutes = 5
 
 [audio]
-# Leave blank to auto-detect your default mic and system audio
+# Leave blank to auto-detect your default mic and system audio.
+# The macOS UI dropdowns persist your selection back to this file.
 # Linux:  Run `pactl list short sources` to list available sources
-# macOS:  Run `ffmpeg -f avfoundation -list_devices true -i ""` to list devices
-#         System audio requires BlackHole: brew install --cask blackhole-2ch
+# macOS:  System audio is captured via ScreenCaptureKit — no extra
+#         hardware/virtual-device setup required.
 mic_source = ""
-system_source = ""  # Linux: .monitor source | macOS: BlackHole device name
+system_source = ""  # macOS: "system" (default), "off" for mic-only. Linux: .monitor source.
 
 [transcriber]
 # Which transcription backend to use:

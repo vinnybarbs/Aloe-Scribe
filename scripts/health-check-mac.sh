@@ -1,6 +1,6 @@
 #!/bin/bash
 # Aloe Scribe — macOS Health Check
-# Tests mic, BlackHole, recording, and transcription end-to-end.
+# Tests mic, ScreenCaptureKit helper, recording, and transcription end-to-end.
 
 set -e
 
@@ -48,15 +48,16 @@ else
 fi
 
 # -----------------------------------------------------------
-# 3. BlackHole
+# 3. ScreenCaptureKit audio helper (replaces the old BlackHole check)
 # -----------------------------------------------------------
-printf "%-40s" "3. BlackHole (system audio)"
-if echo "$DEVICES" | grep -iq "blackhole"; then
-    BLACKHOLE_IDX=$(echo "$DEVICES" | grep -i "blackhole" | grep -o '\[[0-9]*\]' | head -1 | tr -d '[]')
-    echo -e "[$PASS] Device index: $BLACKHOLE_IDX"
+printf "%-40s" "3. SCK audio helper"
+SCK_HELPER="$HOME/aloe-scribe/bin/aloe-audio-capture"
+if [ -x "$SCK_HELPER" ]; then
+    echo -e "[$PASS] $SCK_HELPER"
+elif [ -x "/Applications/Aloe Scribe.app/Contents/Resources/bin/aloe-audio-capture" ]; then
+    echo -e "[$PASS] (bundled in .app)"
 else
-    echo -e "[$WARN] Not found — mic-only recording"
-    echo "         Install: brew install --cask blackhole-2ch"
+    echo -e "[$WARN] Helper not built yet — run: bash scripts/build-helper.sh"
 fi
 
 # -----------------------------------------------------------
