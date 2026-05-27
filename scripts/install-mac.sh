@@ -22,7 +22,7 @@ echo ""
 # -----------------------------------------------------------
 # 1. Homebrew
 # -----------------------------------------------------------
-echo -e "${GREEN}[1/7]${NC} Checking Homebrew..."
+echo -e "${GREEN}[1/6]${NC} Checking Homebrew..."
 if ! command -v brew &>/dev/null; then
     echo "Homebrew not found. Installing..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -32,14 +32,14 @@ echo "  Homebrew OK"
 # -----------------------------------------------------------
 # 2. System dependencies
 # -----------------------------------------------------------
-echo -e "${GREEN}[2/7]${NC} Installing system dependencies..."
+echo -e "${GREEN}[2/6]${NC} Installing system dependencies..."
 brew install ffmpeg rclone python@3.12 cmake git 2>/dev/null || true
 echo "  ffmpeg, rclone, python, cmake OK"
 
 # -----------------------------------------------------------
 # 3. System audio capture
 # -----------------------------------------------------------
-echo -e "${GREEN}[3/7]${NC} System audio capture..."
+echo -e "${GREEN}[3/6]${NC} System audio capture..."
 echo "  Uses ScreenCaptureKit (macOS 13+) — no BlackHole or Multi-Output"
 echo "  Device required. On first launch you'll be prompted for Screen"
 echo "  Recording permission (used only for audio; no video is captured)."
@@ -47,7 +47,7 @@ echo "  Recording permission (used only for audio; no video is captured)."
 # -----------------------------------------------------------
 # 4. Python venv + dependencies
 # -----------------------------------------------------------
-echo -e "${GREEN}[4/7]${NC} Setting up Python environment..."
+echo -e "${GREEN}[4/6]${NC} Setting up Python environment..."
 # Always recreate venv to avoid stale cached builds
 rm -rf "$VENV_DIR"
 # Use Homebrew's python3.12 for the venv (has tomllib built-in)
@@ -71,53 +71,55 @@ echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
 echo "  parakeet-mlx installed (default transcription backend, Apple Silicon)"
 
 # -----------------------------------------------------------
-# 5. whisper.cpp with Metal
+# 5. whisper.cpp (optional, off by default)
 # -----------------------------------------------------------
-echo -e "${GREEN}[5/7]${NC} Building whisper.cpp with Metal acceleration..."
-if [ -d "$WHISPER_DIR" ]; then
-    echo "  whisper.cpp directory exists, pulling latest..."
-    cd "$WHISPER_DIR" && git pull -q
-else
-    git clone https://github.com/ggerganov/whisper.cpp.git "$WHISPER_DIR"
-    cd "$WHISPER_DIR"
-fi
-
-cmake -B build -DWHISPER_METAL=ON -DCMAKE_BUILD_TYPE=Release 2>/dev/null
-cmake --build build --config Release -j$(sysctl -n hw.ncpu) 2>/dev/null
-echo "  whisper.cpp built with Metal"
-
-# Download model — large-v3-turbo is the recommended default (near-large
-# accuracy at ~3-4x realtime; ~1.6 GB)
-MODEL="large-v3-turbo"
-MODEL_PATH="$WHISPER_DIR/models/ggml-${MODEL}.bin"
-if [ -f "$MODEL_PATH" ]; then
-    echo "  Model '$MODEL' already downloaded"
-else
-    echo "  Downloading Whisper '$MODEL' model..."
-    bash "$WHISPER_DIR/models/download-ggml-model.sh" "$MODEL"
-fi
-echo "  Model OK: $MODEL_PATH"
-
-# -----------------------------------------------------------
-# 6. Update config
-# -----------------------------------------------------------
-echo -e "${GREEN}[6/7]${NC} Updating config..."
-cd "$PROJECT_DIR"
+# Parakeet TDT (installed above via parakeet-mlx) is the default backend.
+# whisper.cpp is a fallback — install only if INSTALL_WHISPER=1 is set or
+# the existing config explicitly selects the whisper backend.
+echo -e "${GREEN}[5/6]${NC} whisper.cpp (optional fallback)..."
 CONFIG="$PROJECT_DIR/config/config.toml"
+WANT_WHISPER=0
+if [ "${INSTALL_WHISPER:-0}" = "1" ]; then
+    WANT_WHISPER=1
+elif grep -qE '^backend\s*=\s*"whisper"' "$CONFIG" 2>/dev/null; then
+    WANT_WHISPER=1
+fi
 
-sed -i '' "s|binary_path = .*|binary_path = \"$WHISPER_DIR/build/bin/whisper-cli\"|" "$CONFIG"
-sed -i '' "s|model_path = .*|model_path = \"$MODEL_PATH\"|" "$CONFIG"
-# Point local_dir to ~/meetings by default; user can change via the
-# folder picker in the app's idle screen.
+if [ "$WANT_WHISPER" = "1" ]; then
+    echo "  Building whisper.cpp with Metal acceleration..."
+    if [ -d "$WHISPER_DIR" ]; then
+        cd "$WHISPER_DIR" && git pull -q
+    else
+        git clone https://github.com/ggerganov/whisper.cpp.git "$WHISPER_DIR"
+        cd "$WHISPER_DIR"
+    fi
+    cmake -B build -DWHISPER_METAL=ON -DCMAKE_BUILD_TYPE=Release 2>/dev/null
+    cmake --build build --config Release -j$(sysctl -n hw.ncpu) 2>/dev/null
+    MODEL="large-v3-turbo"
+    MODEL_PATH="$WHISPER_DIR/models/ggml-${MODEL}.bin"
+    if [ ! -f "$MODEL_PATH" ]; then
+        bash "$WHISPER_DIR/models/download-ggml-model.sh" "$MODEL"
+    fi
+    cd "$PROJECT_DIR"
+    sed -i '' "s|binary_path = .*|binary_path = \"$WHISPER_DIR/build/bin/whisper-cli\"|" "$CONFIG"
+    sed -i '' "s|model_path = .*|model_path = \"$MODEL_PATH\"|" "$CONFIG"
+    echo "  whisper.cpp + $MODEL installed"
+else
+    echo "  Skipped (default is Parakeet). To install later, rerun:"
+    echo "    INSTALL_WHISPER=1 bash scripts/install-mac.sh"
+fi
+
+# Output directory — point local_dir to ~/meetings by default; the user
+# can change this via the folder picker in the app's idle screen.
 DEFAULT_OUTPUT="$HOME/meetings"
 mkdir -p "$DEFAULT_OUTPUT"
 sed -i '' "s|local_dir = .*|local_dir = \"$DEFAULT_OUTPUT\"|" "$CONFIG"
-echo "  Config updated with whisper paths + transcript dir ($DEFAULT_OUTPUT)"
+echo "  Transcripts will save to: $DEFAULT_OUTPUT (changeable in the app)"
 
 # -----------------------------------------------------------
-# 7. Build native .app bundle
+# 6. Build native .app bundle
 # -----------------------------------------------------------
-echo -e "${GREEN}[7/7]${NC} Building Aloe Scribe.app via scripts/build-app.sh..."
+echo -e "${GREEN}[6/6]${NC} Building Aloe Scribe.app via scripts/build-app.sh..."
 
 cd "$PROJECT_DIR"
 

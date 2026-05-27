@@ -31,11 +31,18 @@ bash scripts/install-mac.sh
 
 The installer handles everything:
 - Homebrew packages (ffmpeg, python@3.12, cmake)
-- Python venv with PyQt6, pyobjc, and `parakeet-mlx`
-- whisper.cpp built with **Metal GPU acceleration** (fallback transcriber)
+- Python venv with PyQt6, pyobjc, and `parakeet-mlx` (default transcriber — first launch downloads the ~700 MB MLX model into `~/.cache/huggingface/`)
 - Compiles the Swift `aloe-audio-capture` helper that drives ScreenCaptureKit
 - Builds the `.app` via py2app, code-signs both helper and bundle with stable identifiers
 - Installs to `/Applications/Aloe Scribe.app`
+
+**whisper.cpp is not installed by default** — Parakeet is the default backend on macOS and it doesn't need it. If you specifically want whisper as a fallback (multilingual, or non–Apple-Silicon hardware), run:
+
+```bash
+INSTALL_WHISPER=1 bash scripts/install-mac.sh
+```
+
+That builds whisper.cpp with Metal acceleration and downloads `large-v3-turbo` (~1.6 GB).
 
 Once installed, open **Aloe Scribe** from Spotlight (Cmd+Space) or `/Applications`.
 
