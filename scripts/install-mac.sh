@@ -60,15 +60,41 @@ else
     echo "  Using system python3"
 fi
 "$VENV_DIR/bin/pip" install --upgrade pip -q
+
+# Install the always-required packages first.
 "$VENV_DIR/bin/pip" install -q \
     "PyQt6>=6.6.0" \
     "pyobjc-framework-Cocoa>=10.0" \
     "pillow>=10.0.0" \
     "tomli>=2.0.0" \
-    "py2app>=0.28.0" \
-    "parakeet-mlx>=0.1.0"
+    "py2app>=0.28.0"
 echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
-echo "  parakeet-mlx installed (default transcription backend, Apple Silicon)"
+
+# parakeet-mlx pulls in mlx, which is Apple Silicon (arm64) only. On Intel
+# Macs the install would fail — fall back to whisper.cpp automatically.
+ARCH="$(uname -m)"
+if [ "$ARCH" = "arm64" ]; then
+    echo "  Installing parakeet-mlx (default transcription backend)..."
+    if "$VENV_DIR/bin/pip" install "parakeet-mlx>=0.1.0"; then
+        # Verify the import works — pip "success" doesn't always mean the
+        # native libs load cleanly (mismatched Python, missing Metal, etc.).
+        if "$VENV_DIR/bin/python3" -c "import parakeet_mlx" 2>/dev/null; then
+            echo "  ✓ parakeet-mlx ready"
+        else
+            echo "  ✗ parakeet-mlx installed but failed to import — falling back to whisper"
+            INSTALL_WHISPER=1
+        fi
+    else
+        echo "  ✗ parakeet-mlx install failed — falling back to whisper"
+        INSTALL_WHISPER=1
+    fi
+else
+    echo "  ⚠ Detected Intel Mac (arch=$ARCH) — parakeet-mlx requires Apple Silicon."
+    echo "    Falling back to whisper.cpp."
+    INSTALL_WHISPER=1
+    # Also flip the config so the app actually uses whisper.
+    sed -i '' 's|^backend\s*=\s*"parakeet"|backend = "whisper"|' "$PROJECT_DIR/config/config.toml"
+fi
 
 # -----------------------------------------------------------
 # 5. whisper.cpp (optional, off by default)
