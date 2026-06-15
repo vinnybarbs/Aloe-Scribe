@@ -2,13 +2,33 @@
 """
 transcribe_wav.py — Post-call recovery tool.
 
-Runs whisper.cpp on an existing WAV and writes the Markdown transcript
-next to it. Use this when the app crashed mid-call and left behind a WAV,
-or when a recording's ffmpeg process kept writing silence after the call.
+Transcribes WAV files that the app left behind (crash mid-call, or a
+transcription backend that failed/raised and so never cleaned up the WAV).
+Writes the Markdown transcript next to each WAV.
+
+By default it uses the SAME backend the app is configured for in
+config/config.toml (Parakeet), so recovered transcripts match your normal
+ones. If Parakeet fails and whisper.cpp is installed, it automatically falls
+back to whisper unless --no-fallback is given.
 
 Usage:
+    # One file:
     python scripts/transcribe_wav.py ~/meetings/2026-04-17-1127-busy.wav
-    python scripts/transcribe_wav.py <wav> --title "Busy call" --sync --delete-wav
+
+    # Every orphan WAV in your meetings folder (no .md sibling yet):
+    python scripts/transcribe_wav.py
+
+    # A specific folder, forcing whisper, and syncing the results:
+    python scripts/transcribe_wav.py ~/meetings --backend whisper --sync
+
+Options:
+    --title       Override inferred meeting title (single-file only)
+    --date        ISO datetime, e.g. 2026-04-17T11:27 (single-file only)
+    --output      Output .md path (single-file only; default: alongside WAV)
+    --backend     Force "parakeet" or "whisper" (default: from config)
+    --no-fallback Don't fall back to whisper if the primary backend fails
+    --sync        Queue the .md(s) for rclone sync
+    --delete-wav  Delete each WAV after a successful transcription
 """
 
 import argparse
@@ -54,53 +74,145 @@ def infer_from_filename(wav: Path) -> tuple[str, datetime]:
     return wav.stem.replace("-", " ").title(), datetime.fromtimestamp(wav.stat().st_mtime)
 
 
-def main():
-    p = argparse.ArgumentParser(description="Transcribe an orphan WAV via whisper.cpp")
-    p.add_argument("wav", type=Path, help="Path to the .wav file")
-    p.add_argument("--title", help="Meeting title (default: inferred from filename)")
-    p.add_argument("--date", help="ISO datetime, e.g. 2026-04-17T11:27 (default: inferred)")
-    p.add_argument("--output", type=Path, help="Output .md path (default: alongside WAV)")
-    p.add_argument("--sync", action="store_true", help="Queue the .md for rclone sync")
-    p.add_argument("--delete-wav", action="store_true", help="Delete WAV after success (default: keep)")
-    args = p.parse_args()
+def build_transcriber(config: dict, backend: str):
+    """Return a transcriber instance for the named backend ("parakeet"/"whisper")."""
+    if backend == "parakeet":
+        from transcriber_parakeet import ParakeetTranscriber
 
-    if not args.wav.exists():
-        log.error(f"WAV not found: {args.wav}")
-        sys.exit(1)
+        model_id = config.get("transcriber", {}).get(
+            "parakeet_model", ParakeetTranscriber.DEFAULT_MODEL
+        )
+        return ParakeetTranscriber(model=model_id)
+    return Transcriber(
+        binary_path=config["whisper"]["binary_path"],
+        model_path=config["whisper"]["model_path"],
+    )
+
+
+def whisper_available(config: dict) -> bool:
+    try:
+        return (
+            Path(config["whisper"]["binary_path"]).exists()
+            and Path(config["whisper"]["model_path"]).exists()
+        )
+    except Exception:
+        return False
+
+
+def transcribe_one(
+    wav: Path,
+    config: dict,
+    primary_backend: str,
+    allow_fallback: bool,
+    title: str | None = None,
+    date: str | None = None,
+    output: Path | None = None,
+) -> Path | None:
+    """Transcribe a single WAV, with optional whisper fallback. Returns md path or None."""
+    inferred_title, inferred_date = infer_from_filename(wav)
+    meeting_title = title or inferred_title
+    meeting_date = datetime.fromisoformat(date) if date else inferred_date
+    md_path = output if output else wav.with_suffix(".md")
+
+    log.info(f"Input:  {wav}")
+    log.info(f"Output: {md_path}")
+    log.info(f"Title:  {meeting_title}  ({meeting_date.isoformat()})")
+
+    # Try primary backend, then whisper fallback if allowed and available.
+    backends = [primary_backend]
+    if (
+        allow_fallback
+        and primary_backend != "whisper"
+        and whisper_available(config)
+    ):
+        backends.append("whisper")
+
+    for backend in backends:
+        log.info(f"Transcribing with backend: {backend}")
+        try:
+            transcriber = build_transcriber(config, backend)
+            result = transcriber.transcribe(
+                audio_path=wav,
+                output_path=md_path,
+                meeting_title=meeting_title,
+                meeting_date=meeting_date,
+            )
+        except Exception as e:
+            log.error(f"  {backend} raised: {e}")
+            result = None
+        if result:
+            log.info(f"Transcript written ({backend}): {md_path}")
+            return md_path
+        log.warning(f"  {backend} produced no transcript")
+
+    log.error(f"All backends failed for: {wav}")
+    return None
+
+
+def find_orphan_wavs(directory: Path) -> list[Path]:
+    """WAV files in directory with no matching .md sibling, oldest first."""
+    orphans = [w for w in sorted(directory.glob("*.wav")) if not w.with_suffix(".md").exists()]
+    return orphans
+
+
+def main():
+    p = argparse.ArgumentParser(description="Transcribe orphan WAV file(s)")
+    p.add_argument(
+        "wav",
+        type=Path,
+        nargs="?",
+        help="Path to a .wav file or a folder. Omit to scan the configured meetings folder.",
+    )
+    p.add_argument("--title", help="Meeting title (single-file only; default: inferred)")
+    p.add_argument("--date", help="ISO datetime (single-file only; default: inferred)")
+    p.add_argument("--output", type=Path, help="Output .md path (single-file only)")
+    p.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper"],
+        help="Force a backend (default: from config.toml)",
+    )
+    p.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="Don't fall back to whisper if the primary backend fails",
+    )
+    p.add_argument("--sync", action="store_true", help="Queue the .md(s) for rclone sync")
+    p.add_argument("--delete-wav", action="store_true", help="Delete each WAV after success")
+    args = p.parse_args()
 
     config_path = ROOT / "config" / "config.toml"
     with open(config_path, "rb") as f:
         config = tomllib.load(f)
 
-    inferred_title, inferred_date = infer_from_filename(args.wav)
-    title = args.title or inferred_title
-    meeting_date = datetime.fromisoformat(args.date) if args.date else inferred_date
+    primary_backend = (
+        args.backend or config.get("transcriber", {}).get("backend", "whisper")
+    ).lower()
+    allow_fallback = not args.no_fallback
 
-    md_path = args.output if args.output else args.wav.with_suffix(".md")
+    # Resolve the work list: a single file, a directory, or the configured dir.
+    if args.wav and args.wav.is_file():
+        wavs = [args.wav]
+    elif args.wav and args.wav.is_dir():
+        wavs = find_orphan_wavs(args.wav)
+    elif args.wav:
+        log.error(f"Not found: {args.wav}")
+        sys.exit(1)
+    else:
+        local_dir = Path(config["output"]["local_dir"]).expanduser()
+        wavs = find_orphan_wavs(local_dir)
+        log.info(f"Scanning {local_dir} for orphan WAVs…")
 
-    log.info(f"Input:  {args.wav}")
-    log.info(f"Output: {md_path}")
-    log.info(f"Title:  {title}")
-    log.info(f"Date:   {meeting_date.isoformat()}")
+    if not wavs:
+        log.info("No WAV files to transcribe. Nothing to do.")
+        return
 
-    transcriber = Transcriber(
-        binary_path=config["whisper"]["binary_path"],
-        model_path=config["whisper"]["model_path"],
-    )
-
-    result = transcriber.transcribe(
-        audio_path=args.wav,
-        output_path=md_path,
-        meeting_title=title,
-        meeting_date=meeting_date,
-    )
-
-    if not result:
-        log.error("Transcription failed")
+    if len(wavs) > 1 and (args.title or args.date or args.output):
+        log.error("--title/--date/--output only apply to a single WAV file.")
         sys.exit(1)
 
-    log.info(f"Transcript written: {md_path}")
+    log.info(f"{len(wavs)} WAV file(s) to process. Primary backend: {primary_backend}")
 
+    syncer = None
     if args.sync and config["sync"]["enabled"]:
         syncer = Syncer(
             rclone_remote=config["sync"]["rclone_remote"],
@@ -108,16 +220,40 @@ def main():
             notify_on_sync=config["app"]["notify_on_sync"],
         )
         syncer.start()
-        syncer.enqueue(md_path)
+
+    succeeded, failed = [], []
+    for wav in wavs:
+        md_path = transcribe_one(
+            wav,
+            config,
+            primary_backend,
+            allow_fallback,
+            title=args.title,
+            date=args.date,
+            output=args.output,
+        )
+        if md_path:
+            succeeded.append(wav)
+            if syncer:
+                syncer.enqueue(md_path)
+            if args.delete_wav:
+                wav.unlink()
+                log.info(f"Deleted WAV: {wav}")
+        else:
+            failed.append(wav)
+
+    if syncer:
         import time
+
+        log.info("Waiting for sync to flush…")
         time.sleep(90)
         syncer.stop()
 
-    if args.delete_wav:
-        args.wav.unlink()
-        log.info(f"Deleted WAV: {args.wav}")
-    else:
-        log.info(f"Kept WAV: {args.wav}")
+    log.info(f"Done. {len(succeeded)} succeeded, {len(failed)} failed.")
+    if failed:
+        for w in failed:
+            log.error(f"  FAILED: {w}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

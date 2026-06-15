@@ -150,6 +150,7 @@ class AloeScribe:
             list_sources=list_sources,
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
+            on_transcribe_file=self._transcribe_existing_file,
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
             current_output_dir=str(self.output_dir),
@@ -291,29 +292,134 @@ class AloeScribe:
         md_filename = f"{date_str}-{time_str}-{slug}.md"
         md_path = self.output_dir / md_filename
 
-        # Transcribe
-        result = self.transcriber.transcribe(
-            audio_path=wav_path,
-            output_path=md_path,
-            meeting_title=meeting.title if meeting else "Recording",
-            meeting_date=now,
-        )
-
-        # Clean up the WAV (already have the transcript)
+        # Transcribe. Guard against the backend raising (e.g. a Parakeet Metal
+        # error) — an uncaught exception here would kill this daemon thread
+        # silently, leaving the WAV orphaned with no transcript and no notice.
+        result = None
         try:
-            wav_path.unlink()
-            log.debug(f"Deleted WAV: {wav_path.name}")
-        except Exception:
-            pass
+            result = self.transcriber.transcribe(
+                audio_path=wav_path,
+                output_path=md_path,
+                meeting_title=meeting.title if meeting else "Recording",
+                meeting_date=now,
+            )
+        except Exception as e:
+            log.error(f"Transcription raised: {e}")
+
+        # If the primary backend failed, try whisper.cpp before giving up.
+        if not result:
+            result = self._whisper_fallback(
+                wav_path, md_path, meeting.title if meeting else "Recording", now
+            )
+
+        if result:
+            # Only delete the WAV once we actually have the transcript.
+            try:
+                wav_path.unlink()
+                log.debug(f"Deleted WAV: {wav_path.name}")
+            except Exception:
+                pass
+            self.tray.set_done(md_path)
+            self.syncer.enqueue(md_path)
+        else:
+            # Keep the WAV so the recording can be recovered. Surface the exact
+            # command to re-run it.
+            log.error(
+                f"Transcription failed — WAV kept for recovery: {wav_path}\n"
+                f"  Recover with: python3 scripts/transcribe_wav.py {wav_path}"
+            )
+            self.tray.set_idle()
+
+        self._current_meeting = None
+
+    # ------------------------------------------------------------------ #
+    # Transcribe an existing WAV chosen from the UI dropdown               #
+    # ------------------------------------------------------------------ #
+
+    def _transcribe_existing_file(self, wav_path):
+        """Transcribe an already-recorded WAV the user picked in the UI.
+
+        Mirrors the live recording path: infers the meeting title/date from the
+        filename, runs the configured backend (with whisper fallback), and
+        updates the tray. The WAV is kept on success here — the dropdown lists
+        only WAVs without a .md sibling, so a successful run drops it from the
+        list naturally without deleting the audio.
+        """
+        wav_path = Path(wav_path).expanduser()
+        if not wav_path.exists():
+            log.error(f"WAV not found: {wav_path}")
+            self.tray.set_idle()
+            return
+
+        title, when = self._infer_meeting_from_filename(wav_path)
+        md_path = wav_path.with_suffix(".md")
+        log.info(f"Transcribing existing file: {wav_path.name} → {md_path.name}")
+
+        result = None
+        try:
+            result = self.transcriber.transcribe(
+                audio_path=wav_path,
+                output_path=md_path,
+                meeting_title=title,
+                meeting_date=when,
+            )
+        except Exception as e:
+            log.error(f"Transcription raised: {e}")
+
+        if not result:
+            result = self._whisper_fallback(wav_path, md_path, title, when)
 
         if result:
             self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
         else:
-            log.error("Transcription failed")
+            log.error(f"Could not transcribe {wav_path}")
             self.tray.set_idle()
 
-        self._current_meeting = None
+    @staticmethod
+    def _infer_meeting_from_filename(wav_path: Path):
+        """Parse YYYY-MM-DD-HHMM-slug.wav → (title, datetime). Falls back to mtime."""
+        import re
+
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})-(\d{4})-(.+)$", wav_path.stem)
+        if m:
+            date_str, time_str, slug = m.groups()
+            try:
+                when = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H%M")
+                return slug.replace("-", " ").title(), when
+            except ValueError:
+                pass
+        return (
+            wav_path.stem.replace("-", " ").title(),
+            datetime.fromtimestamp(wav_path.stat().st_mtime),
+        )
+
+    def _whisper_fallback(self, wav_path, md_path, title, when):
+        """Transcribe via whisper.cpp when the primary backend fails.
+
+        Only attempted when the active backend isn't already whisper and the
+        whisper binary + model are both present. Returns the md path or None.
+        """
+        if isinstance(self.transcriber, Transcriber):
+            return None  # primary backend already was whisper
+        w = self.config.get("whisper", {})
+        binary = Path(w.get("binary_path", "")).expanduser()
+        model = Path(w.get("model_path", "")).expanduser()
+        if not (binary.exists() and model.exists()):
+            return None
+        log.info("Primary backend failed — falling back to whisper.cpp")
+        try:
+            return Transcriber(
+                binary_path=str(binary), model_path=str(model)
+            ).transcribe(
+                audio_path=wav_path,
+                output_path=md_path,
+                meeting_title=title,
+                meeting_date=when,
+            )
+        except Exception as e:
+            log.error(f"Whisper fallback raised: {e}")
+            return None
 
 
 # ---------------------------------------------------------------------------

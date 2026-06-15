@@ -208,6 +208,7 @@ class AloeScribeWindow(QMainWindow):
         list_sources: Callable = None,
         on_device_change: Callable = None,
         on_output_dir_change: Callable = None,
+        on_transcribe_file: Callable = None,
         current_mic: str = "",
         current_system: str = "",
         current_output_dir: str = "",
@@ -219,6 +220,7 @@ class AloeScribeWindow(QMainWindow):
         self._list_sources = list_sources
         self._on_device_change = on_device_change
         self._on_output_dir_change = on_output_dir_change
+        self._on_transcribe_file = on_transcribe_file
         self._selected_mic = current_mic
         self._selected_system = current_system
         self._output_dir = current_output_dir
@@ -452,6 +454,11 @@ class AloeScribeWindow(QMainWindow):
         # Output folder picker
         self._build_output_folder_row()
 
+        # Recovery dropdown: pick an un-transcribed recording and run it.
+        # Only appears when such WAVs exist; grow the window to fit it.
+        has_recordings = self._build_transcribe_file_row()
+        self.setFixedSize(300, 540 if has_recordings else 460)
+
         btn = QPushButton("Start Recording Now")
         btn.setObjectName("btnStart")
         btn.clicked.connect(self._on_manual_start)
@@ -628,6 +635,72 @@ class AloeScribeWindow(QMainWindow):
             self._output_dir_label.setToolTip(tooltip)
         if self._on_output_dir_change:
             self._on_output_dir_change(chosen)
+        # Folder changed — the set of recoverable recordings likely changed too.
+        # Re-render the idle screen so the transcribe dropdown reflects it.
+        self._render_idle()
+
+    def _build_transcribe_file_row(self) -> bool:
+        """Show a dropdown of un-transcribed recordings + a Transcribe button.
+
+        Lists only .wav files in the output folder that don't yet have a .md
+        sibling — i.e. recordings whose transcription failed or was
+        interrupted. Returns True if the row was added (recordings exist)."""
+        if not self._on_transcribe_file:
+            return False
+        out_dir = (
+            Path(self._output_dir).expanduser()
+            if self._output_dir
+            else Path("~/meetings").expanduser()
+        )
+        try:
+            wavs = sorted(
+                w for w in out_dir.glob("*.wav") if not w.with_suffix(".md").exists()
+            )
+        except Exception:
+            wavs = []
+        if not wavs:
+            self._wav_combo = None
+            return False
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._content_layout.addWidget(sep)
+
+        label = QLabel("TRANSCRIBE A RECORDING")
+        label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(label)
+
+        row = QHBoxLayout()
+        self._wav_combo = QComboBox()
+        for w in wavs:
+            self._wav_combo.addItem(w.name, str(w))
+        row.addWidget(self._wav_combo, 1)
+
+        go = QPushButton("Transcribe")
+        go.setObjectName("btnSkip")
+        go.setMinimumWidth(96)
+        go.clicked.connect(self._on_transcribe_clicked)
+        row.addWidget(go, 0)
+
+        self._content_layout.addLayout(row)
+        return True
+
+    def _on_transcribe_clicked(self):
+        combo = getattr(self, "_wav_combo", None)
+        if combo is None:
+            return
+        wav = combo.currentData()
+        if not wav or not self._on_transcribe_file:
+            return
+        log.info(f"UI: transcribe existing recording: {wav}")
+        # Show the processing screen, then run transcription off the UI thread.
+        self._signals.set_processing.emit()
+        import threading
+
+        threading.Thread(
+            target=lambda: self._on_transcribe_file(wav), daemon=True
+        ).start()
 
     def _render_recording(self, meeting):
         self._state = "recording"
@@ -851,7 +924,7 @@ class AloeScribeApp:
 
     def __init__(self, on_start_recording, on_stop_recording, on_quit,
                  list_sources=None, on_device_change=None,
-                 on_output_dir_change=None,
+                 on_output_dir_change=None, on_transcribe_file=None,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording
@@ -859,6 +932,7 @@ class AloeScribeApp:
         self._list_sources = list_sources
         self._on_device_change = on_device_change
         self._on_output_dir_change = on_output_dir_change
+        self._on_transcribe_file = on_transcribe_file
         self._current_mic = current_mic
         self._current_system = current_system
         self._current_output_dir = current_output_dir
@@ -896,6 +970,7 @@ class AloeScribeApp:
             list_sources=self._list_sources,
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
+            on_transcribe_file=self._on_transcribe_file,
             current_mic=self._current_mic,
             current_system=self._current_system,
             current_output_dir=self._current_output_dir,
