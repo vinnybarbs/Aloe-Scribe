@@ -46,6 +46,28 @@ That builds whisper.cpp with Metal acceleration and downloads `large-v3-turbo` (
 
 Once installed, open **Aloe Scribe** from Spotlight (Cmd+Space) or `/Applications`.
 
+## Updating to the latest version (macOS)
+
+```bash
+cd ~/aloe-scribe
+bash scripts/update-mac.sh
+```
+
+That pulls the newest code, **preserves your settings** (calendar URL, mic,
+output folder — they live inside the installed app bundle), and rebuilds +
+reinstalls the app. A relaunch alone is **not** enough: the app code is frozen
+into the bundle, so an update has to rebuild it.
+
+> **First update only:** if you installed before settings were untracked, your
+> local `config/config.toml` may still be tracked by git and block the pull.
+> Run this once, then use `update-mac.sh` from then on:
+> ```bash
+> cd ~/aloe-scribe
+> git checkout -- config/config.toml   # your live settings are safe in the app bundle
+> git pull origin main
+> bash scripts/update-mac.sh
+> ```
+
 **First-run permissions.** On first launch macOS will prompt for:
 - **Microphone** — required, even if you only want system audio.
 - **Screen Recording** — required for capturing system audio via ScreenCaptureKit. No video is ever captured or written, only audio.
@@ -235,14 +257,15 @@ aloe-scribe/
 
 ## Rebuilding after a code change (macOS)
 
-For Python-only changes you can just relaunch the app — the bundle's Python
-loads the live source from your venv at runtime.
-
-For Swift-helper changes or to fully re-freeze:
+The app's Python source is frozen into the bundle at build time, so a code
+change requires a rebuild — relaunching alone won't pick it up:
 
 ```bash
 bash scripts/build-app.sh
 ```
+
+(To also pull the latest from GitHub and preserve your settings in one step,
+use `scripts/update-mac.sh` — see [Updating](#updating-to-the-latest-version-macos).)
 
 That recompiles `bin/aloe-audio-capture`, re-runs py2app, re-signs everything with the stable ad-hoc identifiers (`com.aloescribe.app`, `com.aloescribe.audio-capture`), and installs the result to `/Applications`.
 

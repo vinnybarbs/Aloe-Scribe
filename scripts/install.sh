@@ -10,6 +10,13 @@ RESET="\033[0m"
 
 echo -e "\n${BOLD}🌿 Aloe Scribe — Linux Installer${RESET}\n"
 
+# config/config.toml is per-user and untracked (see .gitignore). Seed it from
+# the committed template on a fresh install so later steps can edit it.
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ ! -f "$PROJECT_DIR/config/config.toml" ]; then
+    cp "$PROJECT_DIR/config/config.toml.example" "$PROJECT_DIR/config/config.toml"
+fi
+
 # ---------------------------------------------------------------------------
 # 1. System dependencies
 # ---------------------------------------------------------------------------

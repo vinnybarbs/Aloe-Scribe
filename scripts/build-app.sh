@@ -38,6 +38,14 @@ if [ ! -x "$VENV_PYTHON" ]; then
     exit 1
 fi
 
+# config/config.toml is per-user and untracked. py2app bundles it (see setup.py
+# DATA_FILES), so it must exist before the build. On a fresh clone, seed it
+# from the template.
+if [ ! -f "$PROJECT_DIR/config/config.toml" ]; then
+    cp "$PROJECT_DIR/config/config.toml.example" "$PROJECT_DIR/config/config.toml"
+    echo "Created config/config.toml from template."
+fi
+
 # 1. Compile + sign the Swift audio-capture helper (committed copy in bin/
 #    gets refreshed). py2app picks it up via DATA_FILES in setup.py and
 #    drops it at Contents/Resources/bin/aloe-audio-capture inside the .app.

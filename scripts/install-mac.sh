@@ -13,6 +13,12 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 WHISPER_DIR="$HOME/whisper.cpp"
 
+# config/config.toml is per-user and untracked (see .gitignore). Seed it from
+# the committed template on a fresh install so the steps below can edit it.
+if [ ! -f "$PROJECT_DIR/config/config.toml" ]; then
+    cp "$PROJECT_DIR/config/config.toml.example" "$PROJECT_DIR/config/config.toml"
+fi
+
 echo ""
 echo "${BOLD}=========================================${NC}"
 echo "${BOLD}  Aloe Scribe — macOS Setup${NC}"
