@@ -149,6 +149,49 @@ sed -i '' "s|local_dir = .*|local_dir = \"$DEFAULT_OUTPUT\"|" "$CONFIG"
 echo "  Transcripts will save to: $DEFAULT_OUTPUT (changeable in the app)"
 
 # -----------------------------------------------------------
+# Parakeet model weights — fetched from GitHub, NOT Hugging Face
+# -----------------------------------------------------------
+# The model is ~2.3 GB. We host it as a GitHub Release (see
+# scripts/publish-model.sh) so installs work where Hugging Face is blocked.
+# Files land in $PROJECT_DIR/models/<name> and the app loads them from that
+# local path (config parakeet_model), so HF is never contacted.
+if [ "$WANT_WHISPER" != "1" ]; then
+    MODEL_NAME="parakeet-tdt-0.6b-v3"
+    MODEL_DIR="$PROJECT_DIR/models/$MODEL_NAME"
+    MODEL_TAG="model-$MODEL_NAME"
+    MODEL_BASE="https://github.com/vinnybarbs/Aloe-Scribe/releases/download/$MODEL_TAG"
+    echo -e "${GREEN}[Model]${NC} Parakeet weights (from GitHub, no Hugging Face)..."
+    mkdir -p "$MODEL_DIR"
+    if [ -f "$MODEL_DIR/model.safetensors" ] && [ -f "$MODEL_DIR/config.json" ]; then
+        echo "  Already present: $MODEL_DIR"
+    else
+        (
+            cd "$MODEL_DIR"
+            echo "  Downloading manifest + config..."
+            curl -fL -# -O "$MODEL_BASE/SHA256SUMS"
+            curl -fL -# -O "$MODEL_BASE/config.json"
+            echo "  Downloading model parts (~2.3 GB)..."
+            for part in $(awk '{print $2}' SHA256SUMS | grep '^model.safetensors.part-'); do
+                curl -fL -# -O "$MODEL_BASE/$part"
+            done
+            echo "  Reassembling model.safetensors..."
+            cat model.safetensors.part-* > model.safetensors
+            rm -f model.safetensors.part-*
+            EXPECTED="$(awk '$2=="model.safetensors"{print $1}' SHA256SUMS)"
+            ACTUAL="$(shasum -a 256 model.safetensors | awk '{print $1}')"
+            if [ "$EXPECTED" != "$ACTUAL" ]; then
+                echo "  ✗ Model checksum mismatch — download corrupt. Re-run the installer." >&2
+                rm -f model.safetensors
+                exit 1
+            fi
+            echo "  ✓ Model verified: $MODEL_DIR"
+        )
+    fi
+    # Point the app at the local model path (replaces the Hugging Face id).
+    sed -i '' "s|^parakeet_model = .*|parakeet_model = \"$MODEL_DIR\"|" "$CONFIG"
+fi
+
+# -----------------------------------------------------------
 # 6. Build native .app bundle
 # -----------------------------------------------------------
 echo -e "${GREEN}[6/6]${NC} Building Aloe Scribe.app via scripts/build-app.sh..."

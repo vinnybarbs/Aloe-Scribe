@@ -14,3 +14,6 @@ bin/aloe-audio-capture
 # User settings — created from config.toml.example on install. Untracked so a
 # user's calendar URL / output folder never collides with an update.
 config/config.toml
+
+# Parakeet model weights — fetched from GitHub Release at install time
+models/

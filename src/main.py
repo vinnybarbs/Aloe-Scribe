@@ -128,6 +128,13 @@ class AloeScribe:
             model_id = config.get("transcriber", {}).get(
                 "parakeet_model", ParakeetTranscriber.DEFAULT_MODEL
             )
+            # When the model is a local directory (the default install fetches
+            # the weights from GitHub, not Hugging Face), force HF offline mode.
+            # That way a blocked/absent Hugging Face never causes a hang or a
+            # surprise network call — the weights load straight from disk.
+            if Path(model_id).expanduser().is_dir():
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
             log.info(f"Transcriber backend: parakeet ({model_id})")
             self.transcriber = ParakeetTranscriber(model=model_id)
         else:

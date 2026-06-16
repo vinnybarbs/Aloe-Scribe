@@ -46,6 +46,27 @@ That builds whisper.cpp with Metal acceleration and downloads `large-v3-turbo` (
 
 Once installed, open **Aloe Scribe** from Spotlight (Cmd+Space) or `/Applications`.
 
+### Transcription model — no Hugging Face required
+
+The Parakeet weights (~2.3 GB) are hosted as a **GitHub Release** on this repo,
+not pulled from Hugging Face. `install-mac.sh` downloads them from the release,
+reassembles + checksum-verifies, drops them in `models/parakeet-tdt-0.6b-v3/`,
+and points the app at that local path. The app then loads the model straight
+from disk — Hugging Face is never contacted (it's forced offline at runtime).
+This means installs work in environments where `huggingface.co` is blocked.
+
+**Maintainers — publishing/refreshing the model release** (one-time, needs the
+model in your local HF cache or a local dir):
+
+```bash
+bash scripts/publish-model.sh            # uses the HF-cache copy
+bash scripts/publish-model.sh /path/dir  # or an explicit model dir
+```
+
+That splits `model.safetensors` into <2 GiB parts (GitHub's asset limit),
+writes a `SHA256SUMS` manifest, and uploads everything to the
+`model-parakeet-tdt-0.6b-v3` release. Model license: CC-BY-4.0 (NVIDIA).
+
 ## Updating to the latest version (macOS)
 
 ```bash
