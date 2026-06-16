@@ -23,11 +23,18 @@ python3 scripts/transcribe_wav.py ~/meetings/2026-04-17-1127-busy.wav
 
 ## Install — macOS
 
+**New machine?** One command sets up everything — Python env, dependencies, the
+Parakeet model (downloaded from GitHub, **not** Hugging Face), and the app:
+
 ```bash
 git clone https://github.com/vinnybarbs/Aloe-Scribe.git ~/aloe-scribe
 cd ~/aloe-scribe
 bash scripts/install-mac.sh
 ```
+
+> Already have Aloe Scribe installed? Don't re-run the installer — it resets
+> your settings. Use the updater instead:
+> [Updating to the latest version](#updating-to-the-latest-version-macos).
 
 The installer handles everything:
 - Homebrew packages (ffmpeg, python@3.12, cmake)
@@ -75,9 +82,11 @@ bash scripts/update-mac.sh
 ```
 
 That pulls the newest code, **preserves your settings** (calendar URL, mic,
-output folder — they live inside the installed app bundle), and rebuilds +
-reinstalls the app. A relaunch alone is **not** enough: the app code is frozen
-into the bundle, so an update has to rebuild it.
+output folder — they live inside the installed app bundle), migrates the
+Parakeet model onto the local GitHub-hosted copy if you're still on the old
+Hugging Face one, and rebuilds + reinstalls the app. A relaunch alone is
+**not** enough: the app code is frozen into the bundle, so an update has to
+rebuild it.
 
 > **First update only:** if you installed before settings were untracked, your
 > local `config/config.toml` may still be tracked by git and block the pull.

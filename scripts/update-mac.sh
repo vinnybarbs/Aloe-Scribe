@@ -29,7 +29,7 @@ REPO_CONFIG="$PROJECT_DIR/config/config.toml"
 TEMPLATE="$PROJECT_DIR/config/config.toml.example"
 
 echo ""
-echo -e "${GREEN}[1/3]${NC} Fetching the latest version from GitHub..."
+echo -e "${GREEN}[1/4]${NC} Fetching the latest version from GitHub..."
 if ! git pull --ff-only origin main; then
     echo ""
     echo -e "${YELLOW}Couldn't fast-forward.${NC} You may have uncommitted code changes." >&2
@@ -37,7 +37,7 @@ if ! git pull --ff-only origin main; then
     exit 1
 fi
 
-echo -e "${GREEN}[2/3]${NC} Preserving your current settings..."
+echo -e "${GREEN}[2/4]${NC} Preserving your current settings..."
 if [ -f "$INSTALLED_CONFIG" ]; then
     # Carry the live settings from the installed bundle into the repo so the
     # rebuild bakes YOUR settings, not the template defaults.
@@ -51,7 +51,16 @@ else
     echo "  Using existing config/config.toml."
 fi
 
-echo -e "${GREEN}[3/3]${NC} Rebuilding and reinstalling the app (~1 minute)..."
+echo -e "${GREEN}[3/4]${NC} Ensuring the Parakeet model is local (no Hugging Face)..."
+if grep -qE '^backend[[:space:]]*=[[:space:]]*"parakeet"' "$REPO_CONFIG" 2>/dev/null; then
+    # Migrates older installs that still point at the Hugging Face model id onto
+    # the GitHub-hosted local copy. No-op once the model is already local.
+    bash "$PROJECT_DIR/scripts/fetch-model.sh"
+else
+    echo "  Backend is not parakeet — skipping."
+fi
+
+echo -e "${GREEN}[4/4]${NC} Rebuilding and reinstalling the app (~1 minute)..."
 bash scripts/build-app.sh
 
 echo ""
