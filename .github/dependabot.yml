@@ -1,13 +1,14 @@
-# Dependabot — weekly checks for vulnerable / outdated dependencies.
-# Opens PRs that bump pins (and their hashes) in the requirements files.
+# Dependabot — weekly checks for outdated GitHub Actions only.
+#
+# The `pip` ecosystem is intentionally NOT configured. This project's Python
+# dependencies are macOS / Apple-Silicon-only (PyQt6 macOS wheels, mlx,
+# mlx-metal, pyobjc) and hash-pinned in requirements-mac.txt. Dependabot
+# resolves in a Linux container and cannot satisfy those wheels, so it errors
+# out ("Could not find a version that satisfies ..."). Python dependency
+# vulnerabilities are instead monitored by pip-audit in
+# scripts/health-check-mac.sh, which runs against the real macOS install.
 version: 2
 updates:
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels: ["dependencies"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
