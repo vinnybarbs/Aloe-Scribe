@@ -61,6 +61,9 @@ else
 fi
 
 echo -e "${GREEN}[4/4]${NC} Rebuilding and reinstalling the app (~1 minute)..."
+# Ensure the stable signing identity exists (once) so this and future updates
+# don't reset Screen Recording / Microphone permissions. Non-fatal.
+bash scripts/create-signing-cert.sh || true
 bash scripts/build-app.sh
 
 echo ""

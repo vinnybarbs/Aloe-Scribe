@@ -71,17 +71,32 @@ fi
 #    then the bundle with com.aloescribe.app. We do NOT use --deep so the
 #    helper keeps its own identifier — but both live under the same .app
 #    so TCC treats them as one Aloe Scribe identity at the bundle level.
+#
+#    Sign with a stable self-signed identity if one exists, so macOS keeps
+#    granted TCC permissions (Screen Recording / Mic) across rebuilds. Falls
+#    back to ad-hoc ("-") otherwise — which works but resets permissions on
+#    every rebuild. Create the identity once: scripts/create-signing-cert.sh
+SIGN_ID="${ALOE_SIGN_ID:-}"
+if [ -z "$SIGN_ID" ]; then
+    if security find-identity -p codesigning 2>/dev/null | grep -q "Aloe Scribe Local Signing"; then
+        SIGN_ID="Aloe Scribe Local Signing"
+    else
+        SIGN_ID="-"
+    fi
+fi
+echo "Code-signing identity: $SIGN_ID"
+
 HELPER_IN_BUNDLE="$APP_DIR/Contents/Resources/bin/aloe-audio-capture"
 if [ -f "$HELPER_IN_BUNDLE" ]; then
     echo "Signing bundled helper (${HELPER_IDENTIFIER})..."
     chmod +x "$HELPER_IN_BUNDLE"
-    codesign --force --sign - --identifier "${HELPER_IDENTIFIER}" "$HELPER_IN_BUNDLE"
+    codesign --force --sign "$SIGN_ID" --identifier "${HELPER_IDENTIFIER}" "$HELPER_IN_BUNDLE"
 else
     echo "Warning: bundled helper not found at $HELPER_IN_BUNDLE" >&2
 fi
 
 echo "Signing .app bundle (${APP_IDENTIFIER})..."
-codesign --force --sign - --identifier "${APP_IDENTIFIER}" "$APP_DIR"
+codesign --force --sign "$SIGN_ID" --identifier "${APP_IDENTIFIER}" "$APP_DIR"
 
 # 5. Install to /Applications.
 echo "Installing to /Applications/${APP_NAME}.app..."

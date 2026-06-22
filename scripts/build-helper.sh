@@ -26,8 +26,20 @@ swiftc -O \
   "$SRC" \
   -o "$OUT"
 
-echo "Code-signing with stable identifier ($IDENTIFIER)..."
-codesign --force --sign - --identifier "$IDENTIFIER" "$OUT"
+# Sign with a stable self-signed identity if one exists, so macOS keeps granted
+# TCC permissions (Screen Recording / Mic) across rebuilds. Falls back to ad-hoc
+# ("-") otherwise — which works, but resets permissions on every rebuild.
+#   Create the identity once: scripts/create-signing-cert.sh
+SIGN_ID="${ALOE_SIGN_ID:-}"
+if [ -z "$SIGN_ID" ]; then
+    if security find-identity -p codesigning 2>/dev/null | grep -q "Aloe Scribe Local Signing"; then
+        SIGN_ID="Aloe Scribe Local Signing"
+    else
+        SIGN_ID="-"
+    fi
+fi
+echo "Code-signing helper (identity: $SIGN_ID, id: $IDENTIFIER)..."
+codesign --force --sign "$SIGN_ID" --identifier "$IDENTIFIER" "$OUT"
 
 echo "Built: $OUT"
 codesign -dv "$OUT" 2>&1 | grep -E "Identifier|Signature"

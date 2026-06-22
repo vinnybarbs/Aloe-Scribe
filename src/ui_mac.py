@@ -235,6 +235,7 @@ class AloeScribeWindow(QMainWindow):
         self._sys_meter = None
         self._mic_level_bar: Optional[QProgressBar] = None
         self._sys_level_bar: Optional[QProgressBar] = None
+        self._sys_warn_label: Optional[QLabel] = None
 
         # Signals for thread-safe updates
         self._signals = _Signals()
@@ -309,6 +310,7 @@ class AloeScribeWindow(QMainWindow):
         self._stop_meters()
         self._mic_level_bar = None
         self._sys_level_bar = None
+        self._sys_warn_label = None
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             if item.widget():
@@ -324,11 +326,17 @@ class AloeScribeWindow(QMainWindow):
     # Audio meters                                                         #
     # ------------------------------------------------------------------ #
 
+    def _system_on(self) -> bool:
+        """True when system-audio capture is enabled (not explicitly off)."""
+        v = (self._selected_system or "").strip().lower()
+        return v not in {"off", "none", "false", "0", "no", "disabled"}
+
     def _build_level_bars(self):
-        """Add the MIC LEVEL bar to the current layout. We dropped the
-        SYSTEM AUDIO LEVEL bar because driving it requires a second SCK
-        stream that competes with the recorder's, and we couldn't get a
-        reliable picture without that conflict."""
+        """Add the MIC LEVEL bar, and — when system capture is on — a SYSTEM
+        AUDIO LEVEL bar plus a warning. The system bar is driven by an SCK
+        meter while idle so the user can SEE background media (e.g. a YouTube
+        tab) being captured BEFORE recording: ScreenCaptureKit grabs the whole
+        system mix, so anything playing lands in the recording."""
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
@@ -344,7 +352,27 @@ class AloeScribeWindow(QMainWindow):
         self._mic_level_bar.setTextVisible(False)
         self._mic_level_bar.setFixedHeight(8)
         self._content_layout.addWidget(self._mic_level_bar)
-        self._sys_level_bar = None
+
+        if self._system_on():
+            sys_label = QLabel("SYSTEM AUDIO LEVEL")
+            sys_label.setObjectName("deviceLabel")
+            self._content_layout.addWidget(sys_label)
+
+            self._sys_level_bar = QProgressBar()
+            self._sys_level_bar.setRange(0, 1000)
+            self._sys_level_bar.setValue(0)
+            self._sys_level_bar.setTextVisible(False)
+            self._sys_level_bar.setFixedHeight(8)
+            self._content_layout.addWidget(self._sys_level_bar)
+
+            self._sys_warn_label = QLabel("")
+            self._sys_warn_label.setWordWrap(True)
+            self._sys_warn_label.setStyleSheet("color: #C94040; font-size: 10px;")
+            self._sys_warn_label.setVisible(False)
+            self._content_layout.addWidget(self._sys_warn_label)
+        else:
+            self._sys_level_bar = None
+            self._sys_warn_label = None
 
     def _start_meters(self):
         """Spawn meter readers for mic (avfoundation/ffmpeg) and system
@@ -371,12 +399,23 @@ class AloeScribeWindow(QMainWindow):
             if self._mic_meter and not self._mic_meter.start():
                 self._mic_meter = None
 
-        # System audio meter is intentionally not started — it required a
-        # parallel SCStream that fought the recorder's own SCStream slot,
-        # and the result was unreliable. Mic meter alone is enough for
-        # "are we capturing something" confidence; system audio gets
-        # verified via the actual transcript on stop.
+        # System-audio meter via the SCK helper in --meter mode. Run it ONLY
+        # while idle: during recording the recorder owns the SCStream and a
+        # second one fights it. Idle is exactly when the user needs it — to spot
+        # background media (YouTube, etc.) before hitting record.
         self._sys_meter = None
+        if (self._state != "recording" and self._system_on()
+                and self._sys_level_bar is not None):
+            try:
+                self._sys_meter = make_sck_meter(
+                    str(_helper_path()),
+                    lambda lvl: self._signals.sys_level.emit(lvl),
+                )
+                if self._sys_meter and not self._sys_meter.start():
+                    self._sys_meter = None
+            except Exception as e:
+                log.warning(f"Could not start system meter: {e}")
+                self._sys_meter = None
 
     def _stop_meters(self):
         for attr in ("_mic_meter", "_sys_meter"):
@@ -405,6 +444,19 @@ class AloeScribeWindow(QMainWindow):
         if bar is not None:
             try:
                 bar.setValue(int(min(1.0, max(0.0, level)) * 1000))
+            except Exception:
+                pass
+        # Warn when something loud is playing into the system mix at idle, so the
+        # user closes it before it gets recorded. Threshold ~8% peak.
+        warn = self._sys_warn_label
+        if warn is not None:
+            try:
+                if self._state != "recording" and level > 0.08:
+                    warn.setText("⚠️ Audio is playing on your Mac — it will be "
+                                 "recorded. Close it (YouTube, music, video) first.")
+                    warn.setVisible(True)
+                else:
+                    warn.setVisible(False)
             except Exception:
                 pass
 
@@ -457,7 +509,8 @@ class AloeScribeWindow(QMainWindow):
         # Recovery dropdown: pick an un-transcribed recording and run it.
         # Only appears when such WAVs exist; grow the window to fit it.
         has_recordings = self._build_transcribe_file_row()
-        self.setFixedSize(300, 540 if has_recordings else 460)
+        base = 510 if self._system_on() else 460  # +50 for the system-audio meter
+        self.setFixedSize(300, base + (80 if has_recordings else 0))
 
         btn = QPushButton("Start Recording Now")
         btn.setObjectName("btnStart")

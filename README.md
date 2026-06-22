@@ -40,7 +40,7 @@ The installer handles everything:
 - Homebrew packages (ffmpeg, python@3.12, cmake)
 - Python venv with PyQt6, pyobjc, and `parakeet-mlx` (default transcriber — first launch downloads the ~700 MB MLX model into `~/.cache/huggingface/`)
 - Compiles the Swift `aloe-audio-capture` helper that drives ScreenCaptureKit
-- Builds the `.app` via py2app, code-signs both helper and bundle with stable identifiers
+- Builds the `.app` via py2app, and code-signs it with a **stable self-signed identity** (created automatically by `scripts/create-signing-cert.sh`) so macOS keeps your Screen Recording / Microphone permissions across future updates instead of revoking them on every rebuild
 - Installs to `/Applications/Aloe Scribe.app`
 
 **whisper.cpp is not installed by default** — Parakeet is the default backend on macOS and it doesn't need it. If you specifically want whisper as a fallback (multilingual, or non–Apple-Silicon hardware), run:
@@ -90,11 +90,11 @@ rebuild it.
 
 > **First update only:** if you installed before settings were untracked, your
 > local `config/config.toml` may still be tracked by git and block the pull.
-> Run this once, then use `update-mac.sh` from then on:
+> Stash it once — your live settings are safe inside the installed app and get
+> restored automatically — then it's just `update-mac.sh` from then on:
 > ```bash
 > cd ~/aloe-scribe
-> git checkout -- config/config.toml   # your live settings are safe in the app bundle
-> git pull origin main
+> git stash
 > bash scripts/update-mac.sh
 > ```
 
@@ -102,7 +102,13 @@ rebuild it.
 - **Microphone** — required, even if you only want system audio.
 - **Screen Recording** — required for capturing system audio via ScreenCaptureKit. No video is ever captured or written, only audio.
 
-Both grants attach to the unified `Aloe Scribe` identity (one row in *System Settings → Privacy & Security*, not separate entries per binary).
+Both grants attach to the unified `Aloe Scribe` identity (one row in *System Settings → Privacy & Security*, not separate entries per binary). Thanks to the stable signing identity, you grant these **once** — updates won't make you re-grant.
+
+> **Tip — close background media before recording.** ScreenCaptureKit captures
+> your Mac's *entire* system-audio mix, so a YouTube tab, music, or a video
+> editor playing in the background gets recorded **on top of** your meeting and
+> can bury the speech. The idle screen shows a **SYSTEM AUDIO LEVEL** meter and a
+> red warning when something is playing — glance at it before you hit record.
 
 ### Audio setup
 

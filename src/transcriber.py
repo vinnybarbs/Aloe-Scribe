@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from frontmatter import build_frontmatter
+
 log = logging.getLogger(__name__)
 
 
@@ -179,7 +181,10 @@ class Transcriber:
         time_str = date.strftime("%I:%M %p")
         iso_date = date.strftime("%Y-%m-%d")
 
+        duration_s = max((seg.end_ms for seg in segments), default=0) / 1000.0
+
         lines = [
+            build_frontmatter(title, date, duration_s, source="aloe-scribe"),
             f"# {title}",
             f"**Date:** {date_str}  ",
             f"**Time:** {time_str}  ",

@@ -313,12 +313,6 @@ class AloeScribe:
         except Exception as e:
             log.error(f"Transcription raised: {e}")
 
-        # If the primary backend failed, try whisper.cpp before giving up.
-        if not result:
-            result = self._whisper_fallback(
-                wav_path, md_path, meeting.title if meeting else "Recording", now
-            )
-
         if result:
             # Only delete the WAV once we actually have the transcript.
             try:
@@ -347,10 +341,10 @@ class AloeScribe:
         """Transcribe an already-recorded WAV the user picked in the UI.
 
         Mirrors the live recording path: infers the meeting title/date from the
-        filename, runs the configured backend (with whisper fallback), and
-        updates the tray. The WAV is kept on success here — the dropdown lists
-        only WAVs without a .md sibling, so a successful run drops it from the
-        list naturally without deleting the audio.
+        filename, runs the configured backend, and updates the tray. The WAV is
+        kept on success here — the dropdown lists only WAVs without a .md
+        sibling, so a successful run drops it from the list naturally without
+        deleting the audio.
         """
         wav_path = Path(wav_path).expanduser()
         if not wav_path.exists():
@@ -372,9 +366,6 @@ class AloeScribe:
             )
         except Exception as e:
             log.error(f"Transcription raised: {e}")
-
-        if not result:
-            result = self._whisper_fallback(wav_path, md_path, title, when)
 
         if result:
             self.tray.set_done(md_path)
@@ -400,33 +391,6 @@ class AloeScribe:
             wav_path.stem.replace("-", " ").title(),
             datetime.fromtimestamp(wav_path.stat().st_mtime),
         )
-
-    def _whisper_fallback(self, wav_path, md_path, title, when):
-        """Transcribe via whisper.cpp when the primary backend fails.
-
-        Only attempted when the active backend isn't already whisper and the
-        whisper binary + model are both present. Returns the md path or None.
-        """
-        if isinstance(self.transcriber, Transcriber):
-            return None  # primary backend already was whisper
-        w = self.config.get("whisper", {})
-        binary = Path(w.get("binary_path", "")).expanduser()
-        model = Path(w.get("model_path", "")).expanduser()
-        if not (binary.exists() and model.exists()):
-            return None
-        log.info("Primary backend failed — falling back to whisper.cpp")
-        try:
-            return Transcriber(
-                binary_path=str(binary), model_path=str(model)
-            ).transcribe(
-                audio_path=wav_path,
-                output_path=md_path,
-                meeting_title=title,
-                meeting_date=when,
-            )
-        except Exception as e:
-            log.error(f"Whisper fallback raised: {e}")
-            return None
 
 
 # ---------------------------------------------------------------------------

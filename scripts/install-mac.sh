@@ -186,9 +186,14 @@ if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null && [ ! -f "$ICNS_OUT" ]; th
     rm -rf "$ICONSET"
 fi
 
+# Create a stable code-signing identity (once) so macOS keeps Screen Recording
+# / Microphone permissions across future updates instead of revoking them on
+# every rebuild. Non-fatal: build-app.sh falls back to ad-hoc if it's missing.
+bash scripts/create-signing-cert.sh || true
+
 # Delegate the actual build + code-signing + install to scripts/build-app.sh.
 # That script compiles the Swift audio helper, runs py2app with the right
-# excludes, signs everything with stable ad-hoc identifiers, and installs
+# excludes, signs everything (with the identity above if present), and installs
 # to /Applications. Keeping the logic there means future rebuilds don't
 # have to re-run this whole install script.
 bash scripts/build-app.sh

@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from frontmatter import build_frontmatter
+
 log = logging.getLogger(__name__)
 
 
@@ -116,7 +118,14 @@ class ParakeetTranscriber:
         date_str = date.strftime("%B %d, %Y")
         time_str = date.strftime("%I:%M %p")
 
+        sentences_for_dur = getattr(result, "sentences", None) or []
+        duration_s = max(
+            (float(getattr(s, "end", 0) or 0) for s in sentences_for_dur),
+            default=0.0,
+        )
+
         lines = [
+            build_frontmatter(title, date, duration_s, source="aloe-scribe-mac"),
             f"# {title}",
             f"**Date:** {date_str}  ",
             f"**Time:** {time_str}  ",
