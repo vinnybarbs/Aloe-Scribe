@@ -812,6 +812,10 @@ class AloeScribeWindow(QMainWindow):
 
         hint = QLabel("Long recordings may take several minutes.")
         hint.setObjectName("stateLabel")
+        # Smaller font + tighter letter-spacing so the line isn't clipped at the
+        # window edges; word-wrap as a safety net on narrow widths.
+        hint.setStyleSheet("font-size: 9px; letter-spacing: 1px;")
+        hint.setWordWrap(True)
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(hint)
 
