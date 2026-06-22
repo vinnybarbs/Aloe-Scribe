@@ -1,0 +1,25 @@
+# CodeQL static analysis — free code scanning for public repos.
+# Results appear under the repo's Security → Code scanning tab.
+name: "CodeQL"
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "23 5 * * 1"   # weekly, Monday 05:23 UTC
+jobs:
+  analyze:
+    name: Analyze (Python)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"

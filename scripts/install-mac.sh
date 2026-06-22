@@ -67,40 +67,40 @@ else
 fi
 "$VENV_DIR/bin/pip" install --upgrade pip -q
 
-# Install the always-required packages first.
-"$VENV_DIR/bin/pip" install -q \
-    "PyQt6>=6.6.0" \
-    "pyobjc-framework-Cocoa>=10.0" \
-    "pillow>=10.0.0" \
-    "tomli>=2.0.0" \
-    "py2app>=0.28.0"
-echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
-
-# parakeet-mlx pulls in mlx, which is Apple Silicon (arm64) only. On Intel
-# Macs the install would fail — fall back to whisper.cpp automatically.
+# Install Python dependencies. On Apple Silicon we install from a fully
+# hash-pinned lockfile (requirements-mac.txt) with --require-hashes, so every
+# package AND transitive dependency is verified against a known SHA256 —
+# reproducible and tamper-evident (a swapped/poisoned wheel is rejected).
+# Regenerate the lockfile when bumping versions:
+#   uv pip compile requirements-mac.in --generate-hashes -o requirements-mac.txt
+#
+# parakeet-mlx (in the lockfile) pulls in mlx, which is Apple Silicon only —
+# on Intel we install a loose base set and fall back to whisper.cpp.
 ARCH="$(uname -m)"
 if [ "$ARCH" = "arm64" ]; then
-    echo "  Installing parakeet-mlx (default transcription backend)..."
-    if "$VENV_DIR/bin/pip" install "parakeet-mlx>=0.1.0"; then
-        # Verify the import works — pip "success" doesn't always mean the
-        # native libs load cleanly (mismatched Python, missing Metal, etc.).
+    echo "  Installing pinned, hash-verified dependencies..."
+    if "$VENV_DIR/bin/pip" install --require-hashes -r "$PROJECT_DIR/requirements-mac.txt"; then
+        # pip "success" doesn't always mean the native libs load (Metal, etc.).
         if "$VENV_DIR/bin/python3" -c "import parakeet_mlx" 2>/dev/null; then
-            echo "  ✓ parakeet-mlx ready"
+            echo "  ✓ Dependencies + parakeet-mlx ready (all SHA256-verified)"
         else
             echo "  ✗ parakeet-mlx installed but failed to import — falling back to whisper"
             INSTALL_WHISPER=1
         fi
     else
-        echo "  ✗ parakeet-mlx install failed — falling back to whisper"
+        echo "  ✗ Hash-verified install failed — falling back to whisper"
         INSTALL_WHISPER=1
     fi
 else
     echo "  ⚠ Detected Intel Mac (arch=$ARCH) — parakeet-mlx requires Apple Silicon."
-    echo "    Falling back to whisper.cpp."
+    echo "    Installing base deps + falling back to whisper.cpp."
+    "$VENV_DIR/bin/pip" install -q \
+        "PyQt6>=6.6.0" "pyobjc-framework-Cocoa>=10.0" "pillow>=10.0.0" \
+        "tomli>=2.0.0" "py2app>=0.28.0"
     INSTALL_WHISPER=1
-    # Also flip the config so the app actually uses whisper.
     sed -i '' 's|^backend\s*=\s*"parakeet"|backend = "whisper"|' "$PROJECT_DIR/config/config.toml"
 fi
+echo "  Python venv OK ($(${VENV_DIR}/bin/python3 --version))"
 
 # -----------------------------------------------------------
 # 5. whisper.cpp (optional, off by default)
@@ -186,14 +186,9 @@ if [ -f "$ICON_SRC" ] && command -v sips &>/dev/null && [ ! -f "$ICNS_OUT" ]; th
     rm -rf "$ICONSET"
 fi
 
-# Create a stable code-signing identity (once) so macOS keeps Screen Recording
-# / Microphone permissions across future updates instead of revoking them on
-# every rebuild. Non-fatal: build-app.sh falls back to ad-hoc if it's missing.
-bash scripts/create-signing-cert.sh || true
-
 # Delegate the actual build + code-signing + install to scripts/build-app.sh.
 # That script compiles the Swift audio helper, runs py2app with the right
-# excludes, signs everything (with the identity above if present), and installs
+# excludes, signs everything with stable ad-hoc identifiers, and installs
 # to /Applications. Keeping the logic there means future rebuilds don't
 # have to re-run this whole install script.
 bash scripts/build-app.sh

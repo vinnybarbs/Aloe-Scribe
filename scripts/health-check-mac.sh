@@ -200,6 +200,22 @@ echo "$TRANSCRIPT"
 echo ""
 echo "========================================="
 echo ""
+echo "-----------------------------------------"
+echo "  Dependency vulnerability audit (pip-audit)"
+echo "-----------------------------------------"
+# Audit the installed venv for known CVEs (environment mode — reads installed
+# package metadata; reliable, unlike the requirements-file mode which spins a
+# sub-venv that breaks under some pythons). Non-fatal/informational.
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VENV_PY="$PROJECT_DIR/.venv/bin/python"
+if [ -x "$VENV_PY" ]; then
+    "$VENV_PY" -m pip install -q pip-audit 2>/dev/null
+    "$VENV_PY" -m pip_audit --progress-spinner off 2>&1 | tail -25 || true
+else
+    echo -e "[$WARN] app venv not found — skipping (run scripts/install-mac.sh first)"
+fi
+echo ""
+
 echo -e "${GREEN}All checks passed.${NC} If the transcript"
 echo "above matches what you said, you're good!"
 echo ""
