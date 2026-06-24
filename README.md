@@ -5,6 +5,10 @@ Records mic + system audio, transcribes locally with Parakeet TDT (or Whisper), 
 
 On macOS, system audio is captured natively via **ScreenCaptureKit** — no BlackHole / Multi-Output Device setup required.
 
+> **Repo layout — Mac vs iPhone.** This **`main`** branch is the **macOS desktop app** (`src/`, `scripts/`, `tools/`).
+> The separate **iPhone app** (Xcode / SwiftUI) lives **only on the `ios` branch** (`ios/`).
+> Do all desktop work on `main`; `git checkout ios` only for the phone app. `main` never contains `ios/`.
+
 ## How it works
 
 1. Open the Aloe Scribe window and click **Start Recording Now**
