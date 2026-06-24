@@ -800,7 +800,7 @@ class AloeScribeWindow(QMainWindow):
             self._live_preview_box.setReadOnly(True)
             self._live_preview_box.setFixedHeight(70)
             self._live_preview_box.setPlaceholderText(
-                "Listening… words will appear here within ~15s."
+                "A transcript sample will appear here at ~20s — confirms it's working."
             )
             self._live_preview_box.setStyleSheet(
                 "font-size: 10px; color: #333; background: #f5f7f5;"

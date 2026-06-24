@@ -289,7 +289,9 @@ class AloeScribe:
         self._live_stop = threading.Event()
         try:
             self.tray.live_preview_clear()
-            self.tray.live_preview_status("Loading transcription model…")
+            self.tray.live_preview_status(
+                "A transcript sample will appear at ~20s — confirms it's working."
+            )
         except Exception:
             pass
         # Pre-load the model now (in parallel) so the first chunk doesn't pay
