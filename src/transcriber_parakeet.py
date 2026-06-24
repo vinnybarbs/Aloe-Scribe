@@ -39,6 +39,9 @@ class ParakeetTranscriber:
         self.cache_dir = cache_dir
         self._model = None
         self._load_lock = threading.Lock()
+        # Serializes model inference so the live-preview loop and the final
+        # transcription never call the (non-reentrant) MLX model concurrently.
+        self._infer_lock = threading.Lock()
 
     def _ensure_loaded(self) -> bool:
         """Lazy-load the Parakeet model. Returns False on failure."""
@@ -99,11 +102,12 @@ class ParakeetTranscriber:
             # chunk_duration=120s with 15s overlap keeps long meetings under
             # Parakeet's max input window while preserving context across the
             # seams. Tuned per parakeet-mlx README guidance.
-            result = self._model.transcribe(
-                str(audio_path),
-                chunk_duration=120.0,
-                overlap_duration=15.0,
-            )
+            with self._infer_lock:
+                result = self._model.transcribe(
+                    str(audio_path),
+                    chunk_duration=120.0,
+                    overlap_duration=15.0,
+                )
         except Exception as e:
             log.error(f"Parakeet transcription failed: {e}")
             return None
@@ -113,6 +117,24 @@ class ParakeetTranscriber:
         output_path.write_text(markdown, encoding="utf-8")
         log.info(f"Transcript saved: {output_path}")
         return output_path
+
+    def transcribe_text(self, audio_path: Path) -> str:
+        """Return the plain transcript text only — no markdown, no file write.
+
+        Used by the live-preview loop, which transcribes short partial chunks of
+        the in-progress recording. Best-effort: returns "" on any failure.
+        """
+        if not self._ensure_loaded():
+            return ""
+        try:
+            with self._infer_lock:
+                result = self._model.transcribe(
+                    str(audio_path), chunk_duration=120.0, overlap_duration=15.0
+                )
+        except Exception as e:
+            log.debug(f"Live-preview transcription failed: {e}")
+            return ""
+        return (getattr(result, "text", "") or "").strip()
 
     def _build_markdown(self, result, title: str, date: datetime) -> str:
         date_str = date.strftime("%B %d, %Y")

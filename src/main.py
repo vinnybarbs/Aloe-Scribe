@@ -158,6 +158,7 @@ class AloeScribe:
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._transcribe_existing_file,
+            live_preview=(backend == "parakeet"),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
             current_output_dir=str(self.output_dir),
@@ -253,6 +254,7 @@ class AloeScribe:
             )
             self._max_duration_timer.daemon = True
             self._max_duration_timer.start()
+            self._start_live_preview(self._recording_path)
         else:
             log.error("Failed to start recording")
             self.tray.set_idle()
@@ -272,9 +274,81 @@ class AloeScribe:
             self._max_duration_timer.cancel()
             self._max_duration_timer = None
 
+    # ------------------------------------------------------------------ #
+    # Live transcription preview (first ~2 min of a recording)            #
+    # ------------------------------------------------------------------ #
+
+    def _start_live_preview(self, wav_path: Path):
+        """Transcribe the in-progress recording in short chunks for the first
+        ~2 minutes and push the text to the UI, so the user can SEE the
+        capture→transcribe pipeline working. Parakeet-only, fully isolated:
+        any failure here never touches the recording or the final transcript.
+        """
+        if not isinstance(self.transcriber, ParakeetTranscriber):
+            return
+        self._live_stop = threading.Event()
+        try:
+            self.tray.live_preview_clear()
+        except Exception:
+            pass
+        threading.Thread(
+            target=self._live_preview_loop,
+            args=(wav_path, self._live_stop),
+            daemon=True,
+        ).start()
+
+    def _live_preview_loop(self, wav_path: Path, stop_event: "threading.Event"):
+        import wave
+        import tempfile
+
+        INTERVAL = 15        # transcribe a fresh chunk every ~15 s
+        MAX_CHUNKS = 8       # ~2 minutes, then stop
+        HEADER = 44          # WAV header the helper writes up front
+        MIN_NEW = 16_000     # ~0.5 s of 16-bit/16 kHz audio before bothering
+        offset = HEADER
+
+        for _ in range(MAX_CHUNKS):
+            if stop_event.wait(INTERVAL):
+                break
+            try:
+                if not wav_path.exists():
+                    continue
+                if wav_path.stat().st_size - offset < MIN_NEW:
+                    continue
+                with open(wav_path, "rb") as f:
+                    f.seek(offset)
+                    raw = f.read()
+                consumed = len(raw) - (len(raw) % 2)  # whole int16 samples only
+                if consumed <= 0:
+                    continue
+                chunk = raw[:consumed]
+                offset += consumed
+
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                    tmp = tf.name
+                with wave.open(tmp, "w") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(16000)
+                    w.writeframes(chunk)
+
+                text = self.transcriber.transcribe_text(Path(tmp))
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
+
+                if text and not stop_event.is_set():
+                    self.tray.live_preview_append(text)
+            except Exception as e:
+                log.debug(f"Live preview chunk skipped: {e}")
+        log.debug("Live preview ended")
+
     def _stop_and_transcribe(self):
         """Stop the recorder, transcribe, sync — all on a background thread."""
         self._cancel_max_duration_timer()
+        if getattr(self, "_live_stop", None) is not None:
+            self._live_stop.set()
         wav_path = self.recorder.stop()
         if not wav_path:
             self.tray.set_idle()

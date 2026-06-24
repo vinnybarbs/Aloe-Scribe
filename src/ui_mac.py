@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QProgressBar,
     QFileDialog,
+    QTextEdit,
 )
 
 from audio_meter import make_avfoundation_meter, make_sck_meter
@@ -194,6 +195,8 @@ class _Signals(QObject):
     set_idle = pyqtSignal()
     mic_level = pyqtSignal(float)
     sys_level = pyqtSignal(float)
+    live_preview_append = pyqtSignal(str)
+    live_preview_clear = pyqtSignal()
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +212,7 @@ class AloeScribeWindow(QMainWindow):
         on_device_change: Callable = None,
         on_output_dir_change: Callable = None,
         on_transcribe_file: Callable = None,
+        live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
         current_output_dir: str = "",
@@ -221,6 +225,7 @@ class AloeScribeWindow(QMainWindow):
         self._on_device_change = on_device_change
         self._on_output_dir_change = on_output_dir_change
         self._on_transcribe_file = on_transcribe_file
+        self._live_preview_enabled = live_preview
         self._selected_mic = current_mic
         self._selected_system = current_system
         self._output_dir = current_output_dir
@@ -236,6 +241,7 @@ class AloeScribeWindow(QMainWindow):
         self._mic_level_bar: Optional[QProgressBar] = None
         self._sys_level_bar: Optional[QProgressBar] = None
         self._sys_warn_label: Optional[QLabel] = None
+        self._live_preview_box: Optional[QTextEdit] = None
 
         # Signals for thread-safe updates
         self._signals = _Signals()
@@ -245,6 +251,8 @@ class AloeScribeWindow(QMainWindow):
         self._signals.set_idle.connect(self._render_idle)
         self._signals.mic_level.connect(self._update_mic_level)
         self._signals.sys_level.connect(self._update_sys_level)
+        self._signals.live_preview_append.connect(self._on_live_preview_append)
+        self._signals.live_preview_clear.connect(self._on_live_preview_clear)
 
         # Timer
         self._timer = QTimer(self)
@@ -311,6 +319,7 @@ class AloeScribeWindow(QMainWindow):
         self._mic_level_bar = None
         self._sys_level_bar = None
         self._sys_warn_label = None
+        self._live_preview_box = None
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             if item.widget():
@@ -778,15 +787,54 @@ class AloeScribeWindow(QMainWindow):
         # Live level meters so the user can verify audio is flowing
         self._build_level_bars()
 
+        # Live transcription preview (first ~2 min) — proof the capture →
+        # transcribe pipeline is actually working, not just that audio flows.
+        if self._live_preview_enabled:
+            prev_label = QLabel("LIVE TRANSCRIPT · first 2 min")
+            prev_label.setObjectName("deviceLabel")
+            self._content_layout.addWidget(prev_label)
+
+            self._live_preview_box = QTextEdit()
+            self._live_preview_box.setReadOnly(True)
+            self._live_preview_box.setFixedHeight(70)
+            self._live_preview_box.setPlaceholderText(
+                "Listening… words will appear here within ~15s."
+            )
+            self._live_preview_box.setStyleSheet(
+                "font-size: 10px; color: #333; background: #f5f7f5;"
+                " border: 1px solid #d8e0d8; border-radius: 4px;"
+            )
+            self._content_layout.addWidget(self._live_preview_box)
+
         stop = QPushButton("Stop & Transcribe")
         stop.setObjectName("btnStop")
         stop.clicked.connect(self._on_stop)
         self._content_layout.addWidget(stop)
 
+        self.setFixedSize(300, 560 if self._live_preview_enabled else 460)
         self._update_status("● RECORDING", "statusRecord")
         self._timer_seconds = 0
         self._timer.start()
         self._start_meters()
+
+    def _on_live_preview_append(self, text: str):
+        box = self._live_preview_box
+        if box is None or not text:
+            return
+        try:
+            box.append(text)
+            sb = box.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception:
+            pass
+
+    def _on_live_preview_clear(self):
+        box = self._live_preview_box
+        if box is not None:
+            try:
+                box.clear()
+            except Exception:
+                pass
 
     def _render_processing(self):
         self._state = "processing"
@@ -887,6 +935,12 @@ class AloeScribeWindow(QMainWindow):
     def set_idle(self):
         self._signals.set_idle.emit()
 
+    def live_preview_append(self, text):
+        self._signals.live_preview_append.emit(text)
+
+    def live_preview_clear(self):
+        self._signals.live_preview_clear.emit()
+
     # ------------------------------------------------------------------ #
     # Handlers                                                             #
     # ------------------------------------------------------------------ #
@@ -982,6 +1036,7 @@ class AloeScribeApp:
     def __init__(self, on_start_recording, on_stop_recording, on_quit,
                  list_sources=None, on_device_change=None,
                  on_output_dir_change=None, on_transcribe_file=None,
+                 live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording
@@ -990,6 +1045,7 @@ class AloeScribeApp:
         self._on_device_change = on_device_change
         self._on_output_dir_change = on_output_dir_change
         self._on_transcribe_file = on_transcribe_file
+        self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
         self._current_output_dir = current_output_dir
@@ -1028,6 +1084,7 @@ class AloeScribeApp:
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._on_transcribe_file,
+            live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,
             current_output_dir=self._current_output_dir,
@@ -1164,3 +1221,11 @@ class AloeScribeApp:
     def set_idle(self):
         if self._window:
             self._window.set_idle()
+
+    def live_preview_append(self, text):
+        if self._window:
+            self._window.live_preview_append(text)
+
+    def live_preview_clear(self):
+        if self._window:
+            self._window.live_preview_clear()
