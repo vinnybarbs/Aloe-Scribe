@@ -792,7 +792,7 @@ class AloeScribeWindow(QMainWindow):
         # Live transcription preview (first ~2 min) — proof the capture →
         # transcribe pipeline is actually working, not just that audio flows.
         if self._live_preview_enabled:
-            prev_label = QLabel("LIVE TRANSCRIPT · first 2 min")
+            prev_label = QLabel("LIVE TRANSCRIPT · updates as you record")
             prev_label.setObjectName("deviceLabel")
             self._content_layout.addWidget(prev_label)
 

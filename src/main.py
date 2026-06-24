@@ -307,15 +307,18 @@ class AloeScribe:
         import wave
         import tempfile
 
-        # First chunk at ~8 s for fast feedback, then every ~15 s for ~2 min.
-        WAITS = [8] + [15] * 7
+        # First chunk at ~8 s for fast feedback, then a fresh chunk every ~15 s
+        # for the WHOLE recording (until stop), appended to the scrollable box.
         HEADER = 44          # WAV header the helper writes up front
         MIN_NEW = 16_000     # ~0.5 s of 16-bit/16 kHz audio before bothering
         offset = HEADER
         got_text = False
+        first = True
         log.info("Live preview started")
 
-        for wait in WAITS:
+        while not stop_event.is_set():
+            wait = 8 if first else 15
+            first = False
             if stop_event.wait(wait):
                 break
             try:
