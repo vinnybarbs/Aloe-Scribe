@@ -100,87 +100,75 @@ def _make_leaf_icon(color: str = "#3A8C5A") -> QIcon:
 # Stylesheet (mirrors the GTK CSS)
 # ---------------------------------------------------------------------------
 _STYLESHEET = """
-    QMainWindow, QWidget#central {
-        background-color: #ffffff;
-    }
-    QLabel#appTitle {
-        font-size: 13px;
-        font-weight: bold;
-        letter-spacing: 2px;
-        color: #3A8C5A;
-    }
-    QLabel#appSub {
-        font-size: 11px;
-        color: #3A8C5A;
-        letter-spacing: 1px;
-    }
-    QLabel#stateLabel {
-        font-size: 10px;
-        color: #999999;
-        letter-spacing: 2px;
-    }
-    QLabel#meetingTitle {
-        font-size: 14px;
-        font-weight: bold;
-        color: #222222;
-    }
-    QLabel#meetingTime {
-        font-size: 11px;
-        color: #888888;
-    }
+    /* Aloe palette: green #2F8F5B · ink #1E2A23 · muted #8B948C
+       hairline #E2E8E3 · input surface #F5F8F5 */
+    QMainWindow, QWidget#central { background-color: #FFFFFF; }
+
+    QLabel#appTitle { font-size: 16px; font-weight: 600; color: #1E2A23; }
+    QLabel#appSub   { font-size: 16px; font-weight: 400; color: #2F8F5B; }
+
+    QLabel#stateLabel   { font-size: 12px; color: #9AA39C; }
+    QLabel#meetingTitle { font-size: 15px; font-weight: 600; color: #1E2A23; }
+    QLabel#meetingTime  { font-size: 12px; color: #9AA39C; }
     QLabel#timer {
-        font-size: 32px;
-        font-weight: bold;
-        color: #222222;
-        font-family: "Menlo", "SF Mono", "Courier New", monospace;
+        font-size: 34px; font-weight: 600; color: #1E2A23;
+        font-family: "SF Mono", "Menlo", "Courier New", monospace;
     }
-    QLabel#statusIdle    { color: #888888; }
-    QLabel#statusRecord  { color: #C94040; }
-    QLabel#statusProcess { color: #3878C8; }
-    QLabel#statusDone    { color: #3A8C5A; }
+    QLabel#statusIdle    { color: #8B948C; font-size: 12px; }
+    QLabel#statusRecord  { color: #C2412F; font-size: 12px; }
+    QLabel#statusProcess { color: #3878C8; font-size: 12px; }
+    QLabel#statusDone    { color: #2F8F5B; font-size: 12px; }
+    QLabel#deviceLabel   { font-size: 12px; color: #8B948C; }
+
     QPushButton#btnStart {
-        background-color: #3A8C5A;
-        color: white;
-        border-radius: 6px;
-        font-weight: bold;
-        font-size: 13px;
-        padding: 8px 16px;
-        border: none;
+        background-color: #2F8F5B; color: #FFFFFF; border: none;
+        border-radius: 12px; font-weight: 600; font-size: 14px; padding: 13px 16px;
     }
-    QPushButton#btnStart:hover { background-color: #2E7048; }
+    QPushButton#btnStart:hover    { background-color: #276F48; }
+    QPushButton#btnStart:disabled { background-color: #BFD6C7; }
+
     QPushButton#btnStop {
-        background-color: #C94040;
-        color: white;
-        border-radius: 6px;
-        font-weight: bold;
-        font-size: 13px;
-        padding: 8px 16px;
-        border: none;
+        background-color: #C2412F; color: #FFFFFF; border: none;
+        border-radius: 12px; font-weight: 600; font-size: 14px; padding: 13px 16px;
     }
-    QPushButton#btnStop:hover { background-color: #A83535; }
+    QPushButton#btnStop:hover { background-color: #A23526; }
+
     QPushButton#btnSkip {
-        background-color: #f0f0f0;
-        color: #555555;
-        border-radius: 6px;
-        font-size: 13px;
-        padding: 8px 16px;
-        border: none;
+        background-color: transparent; color: #2F8F5B;
+        border: 1px solid #CFE0D4; border-radius: 8px; font-size: 12px; padding: 6px 14px;
     }
-    QPushButton#btnSkip:hover { background-color: #e0e0e0; }
-    QFrame#separator {
-        background-color: #eeeeee;
-        max-height: 1px;
-    }
-    QLabel#deviceLabel {
-        font-size: 10px;
-        color: #888888;
-        letter-spacing: 1px;
-    }
+    QPushButton#btnSkip:hover { background-color: #F0F6F1; }
+
+    QFrame#separator { background-color: #EEF2EE; max-height: 1px; border: none; }
+
     QComboBox {
-        font-size: 11px;
-        padding: 4px 8px;
-        border: 1px solid #cccccc;
-        border-radius: 4px;
+        font-size: 13px; color: #1E2A23;
+        background-color: #F5F8F5;
+        border: 1px solid #E2E8E3; border-radius: 10px;
+        padding: 9px 12px;
+    }
+    QComboBox:hover { border: 1px solid #CFE0D4; }
+    QComboBox:focus { border: 1px solid #2F8F5B; }
+    QComboBox::drop-down { border: none; width: 26px; }
+    QComboBox::down-arrow {
+        image: none;
+        border-left: 4px solid transparent; border-right: 4px solid transparent;
+        border-top: 5px solid #A6AEA8; margin-right: 12px; width: 0; height: 0;
+    }
+    QComboBox QAbstractItemView {
+        background-color: #FFFFFF; color: #1E2A23;
+        border: 1px solid #E2E8E3; border-radius: 8px; padding: 4px; outline: none;
+        selection-background-color: #EAF3EE; selection-color: #1E2A23;
+    }
+
+    QProgressBar {
+        background-color: #EEF2EE; border: none; border-radius: 3px; max-height: 6px;
+    }
+    QProgressBar::chunk { background-color: #5FB587; border-radius: 3px; }
+
+    QTextEdit {
+        background-color: #F5F8F5; color: #333333;
+        border: 1px solid #E2E8E3; border-radius: 10px; font-size: 11px; padding: 6px;
     }
 """
 
@@ -265,7 +253,7 @@ class AloeScribeWindow(QMainWindow):
 
         # Window setup
         self.setWindowTitle("Aloe Scribe")
-        self.setFixedSize(300, 460)
+        self.setFixedSize(344, 500)
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.WindowCloseButtonHint
@@ -296,16 +284,17 @@ class AloeScribeWindow(QMainWindow):
     def _build_header(self):
         header = QHBoxLayout()
 
-        title = QLabel("ALOE")
+        title = QLabel("Aloe")
         title.setObjectName("appTitle")
-        sub = QLabel("SCRIBE")
+        sub = QLabel("Scribe")
         sub.setObjectName("appSub")
 
         header.addWidget(title)
+        header.addSpacing(5)
         header.addWidget(sub)
         header.addStretch()
 
-        self._status_label = QLabel("● IDLE")
+        self._status_label = QLabel("● Idle")
         self._status_label.setObjectName("statusIdle")
         header.addWidget(self._status_label)
 
@@ -355,7 +344,7 @@ class AloeScribeWindow(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         self._content_layout.addWidget(sep)
 
-        mic_label = QLabel("MIC LEVEL")
+        mic_label = QLabel("Mic level")
         mic_label.setObjectName("deviceLabel")
         self._content_layout.addWidget(mic_label)
 
@@ -367,7 +356,7 @@ class AloeScribeWindow(QMainWindow):
         self._content_layout.addWidget(self._mic_level_bar)
 
         if self._system_on():
-            sys_label = QLabel("SYSTEM AUDIO LEVEL")
+            sys_label = QLabel("System audio level")
             sys_label.setObjectName("deviceLabel")
             self._content_layout.addWidget(sys_label)
 
@@ -504,7 +493,7 @@ class AloeScribeWindow(QMainWindow):
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(label)
 
-        sub = QLabel("Click below to start capturing audio.")
+        sub = QLabel("Pick your sources, then start capturing.")
         sub.setObjectName("stateLabel")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(sub)
@@ -522,10 +511,10 @@ class AloeScribeWindow(QMainWindow):
         # Recovery dropdown: pick an un-transcribed recording and run it.
         # Only appears when such WAVs exist; grow the window to fit it.
         has_recordings = self._build_transcribe_file_row()
-        base = 510 if self._system_on() else 460  # +50 for the system-audio meter
-        self.setFixedSize(300, base + (80 if has_recordings else 0))
+        base = 550 if self._system_on() else 500  # +50 for the system-audio meter
+        self.setFixedSize(344, base + (90 if has_recordings else 0))
 
-        btn = QPushButton("Start Recording Now")
+        btn = QPushButton("Start recording")
         btn.setObjectName("btnStart")
         btn.clicked.connect(self._on_manual_start)
         # Brief debounce: disable the Start button for 600 ms so a residual
@@ -535,7 +524,7 @@ class AloeScribeWindow(QMainWindow):
         QTimer.singleShot(600, lambda b=btn: b.setEnabled(True))
         self._content_layout.addWidget(btn)
 
-        self._update_status("● IDLE", "statusIdle")
+        self._update_status("● Idle", "statusIdle")
         self._start_meters()
 
     def _build_device_dropdowns(self):
@@ -552,7 +541,7 @@ class AloeScribeWindow(QMainWindow):
         self._content_layout.addWidget(sep)
 
         # Mic dropdown
-        mic_label = QLabel("MICROPHONE")
+        mic_label = QLabel("Microphone")
         mic_label.setObjectName("deviceLabel")
         self._content_layout.addWidget(mic_label)
 
@@ -573,7 +562,7 @@ class AloeScribeWindow(QMainWindow):
         # "Auto-detect / BlackHole" device picker. SCK always captures the
         # full desktop mix when on; off is for in-person meetings where the
         # mic already picks up everyone in the room.
-        sys_label = QLabel("SYSTEM AUDIO")
+        sys_label = QLabel("System audio")
         sys_label.setObjectName("deviceLabel")
         self._content_layout.addWidget(sys_label)
 
@@ -624,7 +613,7 @@ class AloeScribeWindow(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         self._content_layout.addWidget(sep)
 
-        label = QLabel("SAVE TRANSCRIPTS TO")
+        label = QLabel("Save transcripts to")
         label.setObjectName("deviceLabel")
         self._content_layout.addWidget(label)
 
@@ -733,7 +722,7 @@ class AloeScribeWindow(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         self._content_layout.addWidget(sep)
 
-        label = QLabel("TRANSCRIBE A RECORDING")
+        label = QLabel("Transcribe a recording")
         label.setObjectName("deviceLabel")
         self._content_layout.addWidget(label)
 
@@ -773,7 +762,7 @@ class AloeScribeWindow(QMainWindow):
         self._current_meeting = meeting
         self._clear_content()
 
-        state = QLabel("RECORDING")
+        state = QLabel("Recording")
         state.setObjectName("stateLabel")
         state.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(state)
@@ -804,19 +793,15 @@ class AloeScribeWindow(QMainWindow):
             self._live_preview_box.setPlaceholderText(
                 "A transcript sample will appear here at ~20s — confirms it's working."
             )
-            self._live_preview_box.setStyleSheet(
-                "font-size: 10px; color: #333; background: #f5f7f5;"
-                " border: 1px solid #d8e0d8; border-radius: 4px;"
-            )
             self._content_layout.addWidget(self._live_preview_box)
 
-        stop = QPushButton("Stop & Transcribe")
+        stop = QPushButton("Stop & transcribe")
         stop.setObjectName("btnStop")
         stop.clicked.connect(self._on_stop)
         self._content_layout.addWidget(stop)
 
-        self.setFixedSize(300, 560 if self._live_preview_enabled else 460)
-        self._update_status("● RECORDING", "statusRecord")
+        self.setFixedSize(344, 600 if self._live_preview_enabled else 485)
+        self._update_status("● Recording", "statusRecord")
         self._timer_seconds = 0
         self._timer.start()
         self._start_meters()
@@ -869,7 +854,7 @@ class AloeScribeWindow(QMainWindow):
         self._stop_processing_timer()
         self._clear_content()
 
-        stopped = QLabel("RECORDING STOPPED")
+        stopped = QLabel("Recording stopped")
         stopped.setObjectName("stateLabel")
         stopped.setStyleSheet("color: #3A8C5A;")
         stopped.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -899,7 +884,7 @@ class AloeScribeWindow(QMainWindow):
         self._processing_timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(self._processing_timer_label)
 
-        self._update_status("● PROCESSING", "statusProcess")
+        self._update_status("● Processing", "statusProcess")
 
         # Start a processing elapsed timer so the user can see it's alive
         self._processing_seconds = 0
@@ -913,7 +898,7 @@ class AloeScribeWindow(QMainWindow):
         self._stop_processing_timer()
         self._clear_content()
 
-        state = QLabel("COMPLETE")
+        state = QLabel("Complete")
         state.setObjectName("stateLabel")
         state.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(state)
@@ -936,7 +921,7 @@ class AloeScribeWindow(QMainWindow):
         btn_row.addWidget(open_btn)
         self._content_layout.addLayout(btn_row)
 
-        self._update_status("● DONE", "statusDone")
+        self._update_status("● Done", "statusDone")
 
         # If we were waiting to quit after transcription, do that now.
         # Otherwise wait for the user to explicitly click Done — the previous
