@@ -197,6 +197,7 @@ class _Signals(QObject):
     sys_level = pyqtSignal(float)
     live_preview_append = pyqtSignal(str)
     live_preview_clear = pyqtSignal()
+    live_preview_status = pyqtSignal(str)
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +254,7 @@ class AloeScribeWindow(QMainWindow):
         self._signals.sys_level.connect(self._update_sys_level)
         self._signals.live_preview_append.connect(self._on_live_preview_append)
         self._signals.live_preview_clear.connect(self._on_live_preview_clear)
+        self._signals.live_preview_status.connect(self._on_live_preview_status)
 
         # Timer
         self._timer = QTimer(self)
@@ -836,6 +838,16 @@ class AloeScribeWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _on_live_preview_status(self, msg: str):
+        # Shown via the placeholder, so it's visible only until real transcript
+        # text arrives (then the box has content and the placeholder hides).
+        box = self._live_preview_box
+        if box is not None:
+            try:
+                box.setPlaceholderText(msg)
+            except Exception:
+                pass
+
     def _render_processing(self):
         self._state = "processing"
         self._timer.stop()
@@ -940,6 +952,9 @@ class AloeScribeWindow(QMainWindow):
 
     def live_preview_clear(self):
         self._signals.live_preview_clear.emit()
+
+    def live_preview_status(self, msg):
+        self._signals.live_preview_status.emit(msg)
 
     # ------------------------------------------------------------------ #
     # Handlers                                                             #
@@ -1229,3 +1244,7 @@ class AloeScribeApp:
     def live_preview_clear(self):
         if self._window:
             self._window.live_preview_clear()
+
+    def live_preview_status(self, msg):
+        if self._window:
+            self._window.live_preview_status(msg)

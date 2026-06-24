@@ -289,8 +289,12 @@ class AloeScribe:
         self._live_stop = threading.Event()
         try:
             self.tray.live_preview_clear()
+            self.tray.live_preview_status("Loading transcription model…")
         except Exception:
             pass
+        # Pre-load the model now (in parallel) so the first chunk doesn't pay
+        # the ~2-3 s load cost — the first words then appear right around ~10 s.
+        threading.Thread(target=self.transcriber.preload, daemon=True).start()
         threading.Thread(
             target=self._live_preview_loop,
             args=(wav_path, self._live_stop),
@@ -301,19 +305,21 @@ class AloeScribe:
         import wave
         import tempfile
 
-        INTERVAL = 15        # transcribe a fresh chunk every ~15 s
-        MAX_CHUNKS = 8       # ~2 minutes, then stop
+        # First chunk at ~8 s for fast feedback, then every ~15 s for ~2 min.
+        WAITS = [8] + [15] * 7
         HEADER = 44          # WAV header the helper writes up front
         MIN_NEW = 16_000     # ~0.5 s of 16-bit/16 kHz audio before bothering
         offset = HEADER
+        got_text = False
+        log.info("Live preview started")
 
-        for _ in range(MAX_CHUNKS):
-            if stop_event.wait(INTERVAL):
+        for wait in WAITS:
+            if stop_event.wait(wait):
                 break
             try:
-                if not wav_path.exists():
-                    continue
-                if wav_path.stat().st_size - offset < MIN_NEW:
+                if not wav_path.exists() or wav_path.stat().st_size - offset < MIN_NEW:
+                    if not got_text:
+                        self.tray.live_preview_status("Listening for speech…")
                     continue
                 with open(wav_path, "rb") as f:
                     f.seek(offset)
@@ -324,6 +330,8 @@ class AloeScribe:
                 chunk = raw[:consumed]
                 offset += consumed
 
+                if not got_text:
+                    self.tray.live_preview_status("Transcribing…")
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
                     tmp = tf.name
                 with wave.open(tmp, "w") as w:
@@ -338,11 +346,15 @@ class AloeScribe:
                 except Exception:
                     pass
 
+                log.info(f"Live preview chunk: {len(text)} chars")
                 if text and not stop_event.is_set():
+                    got_text = True
                     self.tray.live_preview_append(text)
+                elif not got_text:
+                    self.tray.live_preview_status("Listening for speech…")
             except Exception as e:
-                log.debug(f"Live preview chunk skipped: {e}")
-        log.debug("Live preview ended")
+                log.info(f"Live preview chunk error: {e}")
+        log.info("Live preview ended")
 
     def _stop_and_transcribe(self):
         """Stop the recorder, transcribe, sync — all on a background thread."""

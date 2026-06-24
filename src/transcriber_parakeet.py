@@ -118,6 +118,14 @@ class ParakeetTranscriber:
         log.info(f"Transcript saved: {output_path}")
         return output_path
 
+    def preload(self):
+        """Load the model ahead of time (called when recording starts) so the
+        first live-preview chunk doesn't pay the load cost. Best-effort."""
+        try:
+            self._ensure_loaded()
+        except Exception:
+            pass
+
     def transcribe_text(self, audio_path: Path) -> str:
         """Return the plain transcript text only — no markdown, no file write.
 
