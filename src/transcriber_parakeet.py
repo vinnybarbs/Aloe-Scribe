@@ -119,30 +119,26 @@ class ParakeetTranscriber:
         return output_path
 
     def preload(self):
-        """Load the model ahead of time (called when recording starts) so the
-        first live-preview chunk doesn't pay the load cost. Best-effort."""
+        """Load the model ahead of time (called when recording starts) so live
+        streaming starts the instant the first audio arrives. Best-effort."""
         try:
             self._ensure_loaded()
         except Exception:
             pass
 
-    def transcribe_text(self, audio_path: Path) -> str:
-        """Return the plain transcript text only — no markdown, no file write.
-
-        Used by the live-preview loop, which transcribes short partial chunks of
-        the in-progress recording. Best-effort: returns "" on any failure.
-        """
+    def new_stream(self, depth: int = 2):
+        """Return a StreamingParakeet context manager for real-time (cache-aware)
+        transcription — `with t.new_stream() as s: s.add_audio(mx_array)`; read
+        `s.result` for the growing transcript. Returns None if the model can't
+        load. `depth` trades fidelity vs. cost (higher = closer to a full pass)."""
         if not self._ensure_loaded():
-            return ""
-        try:
-            with self._infer_lock:
-                result = self._model.transcribe(
-                    str(audio_path), chunk_duration=120.0, overlap_duration=15.0
-                )
-        except Exception as e:
-            log.debug(f"Live-preview transcription failed: {e}")
-            return ""
-        return (getattr(result, "text", "") or "").strip()
+            return None
+        return self._model.transcribe_stream(depth=depth)
+
+    def markdown(self, result, title: str, date: datetime) -> str:
+        """Build the Markdown transcript text from a result object (the live
+        stream's `.result`, or a batch transcription result)."""
+        return self._build_markdown(result, title, date)
 
     def _build_markdown(self, result, title: str, date: datetime) -> str:
         date_str = date.strftime("%B %d, %Y")

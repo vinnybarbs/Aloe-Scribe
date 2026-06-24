@@ -238,10 +238,12 @@ class AloeScribe:
     def _start_recording(self, meeting: Meeting):
         """Start capturing audio for this meeting."""
         self._current_meeting = meeting
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+        self._recording_start = datetime.now()
+        timestamp = self._recording_start.strftime("%Y-%m-%d-%H%M")
         slug = meeting.slug()
-        wav_name = f"{timestamp}-{slug}.wav"
-        self._recording_path = self.output_dir / wav_name
+        self._recording_path = self.output_dir / f"{timestamp}-{slug}.wav"
+        # Transcript shares the WAV's timestamp so live streaming can write to it.
+        self._md_path = self.output_dir / f"{timestamp}-{slug}.md"
 
         ok = self.recorder.start(self._recording_path)
         if ok:
@@ -254,7 +256,7 @@ class AloeScribe:
             )
             self._max_duration_timer.daemon = True
             self._max_duration_timer.start()
-            self._start_live_preview(self._recording_path)
+            self._start_streaming(self._recording_path, self._md_path)
         else:
             log.error("Failed to start recording")
             self.tray.set_idle()
@@ -275,97 +277,107 @@ class AloeScribe:
             self._max_duration_timer = None
 
     # ------------------------------------------------------------------ #
-    # Live transcription preview (first ~2 min of a recording)            #
+    # Live streaming transcription (real-time, the whole recording)        #
     # ------------------------------------------------------------------ #
 
-    def _start_live_preview(self, wav_path: Path):
-        """Transcribe the in-progress recording in short chunks for the first
-        ~2 minutes and push the text to the UI, so the user can SEE the
-        capture→transcribe pipeline working. Parakeet-only, fully isolated:
-        any failure here never touches the recording or the final transcript.
+    def _start_streaming(self, wav_path: Path, md_path: Path):
+        """Stream-transcribe the recording in real time: feed new audio to a
+        cache-aware Parakeet stream every ~1.5 s, push the growing transcript to
+        the UI, and checkpoint it to the .md every ~30 s for crash durability.
+        Parakeet-only and isolated — a failure here never affects the recording
+        or the clean final transcript written at Stop.
         """
         if not isinstance(self.transcriber, ParakeetTranscriber):
             return
         self._live_stop = threading.Event()
+        meeting = self._current_meeting
+        title = meeting.title if meeting else "Recording"
+        start_dt = getattr(self, "_recording_start", datetime.now())
         try:
             self.tray.live_preview_clear()
             self.tray.live_preview_status(
-                "A transcript sample will appear at ~20s — confirms it's working."
+                "Live transcript will start appearing within a few seconds…"
             )
         except Exception:
             pass
-        # Pre-load the model now (in parallel) so the first chunk doesn't pay
-        # the ~2-3 s load cost — the first words then appear right around ~10 s.
-        threading.Thread(target=self.transcriber.preload, daemon=True).start()
-        threading.Thread(
-            target=self._live_preview_loop,
-            args=(wav_path, self._live_stop),
+        self._stream_thread = threading.Thread(
+            target=self._streaming_loop,
+            args=(wav_path, md_path, title, start_dt, self._live_stop),
             daemon=True,
-        ).start()
+        )
+        self._stream_thread.start()
 
-    def _live_preview_loop(self, wav_path: Path, stop_event: "threading.Event"):
-        import wave
-        import tempfile
+    def _streaming_loop(self, wav_path, md_path, title, start_dt, stop_event):
+        import numpy as np
+        import mlx.core as mx
 
-        # First chunk at ~8 s for fast feedback, then a fresh chunk every ~15 s
-        # for the WHOLE recording (until stop), appended to the scrollable box.
+        STEP = 1.5           # feed new audio every ~1.5 s
         HEADER = 44          # WAV header the helper writes up front
-        MIN_NEW = 16_000     # ~0.5 s of 16-bit/16 kHz audio before bothering
+        MD_EVERY = 30.0      # checkpoint the partial transcript to .md every ~30 s
         offset = HEADER
-        got_text = False
-        first = True
-        log.info("Live preview started")
+        elapsed = 0.0
+        last_md = 0.0
 
-        while not stop_event.is_set():
-            wait = 8 if first else 15
-            first = False
-            if stop_event.wait(wait):
-                break
-            try:
-                if not wav_path.exists() or wav_path.stat().st_size - offset < MIN_NEW:
-                    if not got_text:
-                        self.tray.live_preview_status("Listening for speech…")
-                    continue
-                with open(wav_path, "rb") as f:
-                    f.seek(offset)
-                    raw = f.read()
-                consumed = len(raw) - (len(raw) % 2)  # whole int16 samples only
-                if consumed <= 0:
-                    continue
-                chunk = raw[:consumed]
-                offset += consumed
-
-                if not got_text:
-                    self.tray.live_preview_status("Transcribing…")
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-                    tmp = tf.name
-                with wave.open(tmp, "w") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(16000)
-                    w.writeframes(chunk)
-
-                text = self.transcriber.transcribe_text(Path(tmp))
-                try:
-                    os.unlink(tmp)
-                except Exception:
-                    pass
-
-                log.info(f"Live preview chunk: {len(text)} chars")
-                if text and not stop_event.is_set():
-                    got_text = True
-                    self.tray.live_preview_append(text)
-                elif not got_text:
-                    self.tray.live_preview_status("Listening for speech…")
-            except Exception as e:
-                log.info(f"Live preview chunk error: {e}")
-        log.info("Live preview ended")
+        cm = self.transcriber.new_stream(depth=2)
+        if cm is None:
+            log.warning("Streaming unavailable (model not loaded)")
+            return
+        log.info("Streaming transcription started")
+        try:
+            with cm as stream:
+                while not stop_event.is_set():
+                    if stop_event.wait(STEP):
+                        break
+                    elapsed += STEP
+                    try:
+                        if not wav_path.exists():
+                            continue
+                        new = wav_path.stat().st_size - offset
+                        if new < 3200:  # < ~0.1 s of new audio — wait
+                            continue
+                        with open(wav_path, "rb") as f:
+                            f.seek(offset)
+                            raw = f.read()
+                        consumed = len(raw) - (len(raw) % 2)
+                        if consumed <= 0:
+                            continue
+                        offset += consumed
+                        samples = (
+                            np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
+                            / 32768.0
+                        )
+                        stream.add_audio(mx.array(samples))
+                        result = stream.result
+                        text = (getattr(result, "text", "") or "").strip()
+                        if text:
+                            self.tray.live_preview_set(text)
+                            # Durability: write the partial transcript periodically.
+                            if elapsed - last_md >= MD_EVERY:
+                                try:
+                                    md_path.parent.mkdir(parents=True, exist_ok=True)
+                                    md_path.write_text(
+                                        self.transcriber.markdown(result, title, start_dt),
+                                        encoding="utf-8",
+                                    )
+                                    last_md = elapsed
+                                except Exception as e:
+                                    log.debug(f"Streaming .md checkpoint failed: {e}")
+                    except Exception as e:
+                        log.info(f"Streaming step error: {e}")
+        except Exception as e:
+            log.info(f"Streaming session error: {e}")
+        log.info("Streaming transcription ended")
 
     def _stop_and_transcribe(self):
         """Stop the recorder, transcribe, sync — all on a background thread."""
         self._cancel_max_duration_timer()
+        # Stop streaming and wait for it to release the model before the final
+        # batch pass (they must not use the model concurrently).
         if getattr(self, "_live_stop", None) is not None:
             self._live_stop.set()
+        if getattr(self, "_stream_thread", None) is not None:
+            self._stream_thread.join(timeout=4)
+            self._stream_thread = None
         wav_path = self.recorder.stop()
         if not wav_path:
             self.tray.set_idle()
@@ -381,14 +393,13 @@ class AloeScribe:
 
     def _transcribe_and_sync(self, wav_path: Path):
         meeting = self._current_meeting
-        now = datetime.now()
-
-        # Build output markdown path
-        date_str = now.strftime("%Y-%m-%d")
-        time_str = now.strftime("%H%M")
-        slug = meeting.slug() if meeting else "recording"
-        md_filename = f"{date_str}-{time_str}-{slug}.md"
-        md_path = self.output_dir / md_filename
+        # Use the path + start time fixed at record start (the live stream may
+        # already have checkpointed a partial transcript here; this clean pass
+        # overwrites it).
+        when = getattr(self, "_recording_start", None) or datetime.now()
+        md_path = getattr(self, "_md_path", None) or (
+            self.output_dir / f"{wav_path.stem}.md"
+        )
 
         # Transcribe. Guard against the backend raising (e.g. a Parakeet Metal
         # error) — an uncaught exception here would kill this daemon thread
@@ -399,7 +410,7 @@ class AloeScribe:
                 audio_path=wav_path,
                 output_path=md_path,
                 meeting_title=meeting.title if meeting else "Recording",
-                meeting_date=now,
+                meeting_date=when,
             )
         except Exception as e:
             log.error(f"Transcription raised: {e}")

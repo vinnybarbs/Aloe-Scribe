@@ -196,6 +196,7 @@ class _Signals(QObject):
     mic_level = pyqtSignal(float)
     sys_level = pyqtSignal(float)
     live_preview_append = pyqtSignal(str)
+    live_preview_set = pyqtSignal(str)
     live_preview_clear = pyqtSignal()
     live_preview_status = pyqtSignal(str)
 
@@ -253,6 +254,7 @@ class AloeScribeWindow(QMainWindow):
         self._signals.mic_level.connect(self._update_mic_level)
         self._signals.sys_level.connect(self._update_sys_level)
         self._signals.live_preview_append.connect(self._on_live_preview_append)
+        self._signals.live_preview_set.connect(self._on_live_preview_set)
         self._signals.live_preview_clear.connect(self._on_live_preview_clear)
         self._signals.live_preview_status.connect(self._on_live_preview_status)
 
@@ -830,6 +832,19 @@ class AloeScribeWindow(QMainWindow):
         except Exception:
             pass
 
+    def _on_live_preview_set(self, text: str):
+        # Streaming sends the full, growing transcript each tick — replace and
+        # keep the newest line in view.
+        box = self._live_preview_box
+        if box is None:
+            return
+        try:
+            box.setPlainText(text)
+            sb = box.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception:
+            pass
+
     def _on_live_preview_clear(self):
         box = self._live_preview_box
         if box is not None:
@@ -949,6 +964,9 @@ class AloeScribeWindow(QMainWindow):
 
     def live_preview_append(self, text):
         self._signals.live_preview_append.emit(text)
+
+    def live_preview_set(self, text):
+        self._signals.live_preview_set.emit(text)
 
     def live_preview_clear(self):
         self._signals.live_preview_clear.emit()
@@ -1240,6 +1258,10 @@ class AloeScribeApp:
     def live_preview_append(self, text):
         if self._window:
             self._window.live_preview_append(text)
+
+    def live_preview_set(self, text):
+        if self._window:
+            self._window.live_preview_set(text)
 
     def live_preview_clear(self):
         if self._window:
