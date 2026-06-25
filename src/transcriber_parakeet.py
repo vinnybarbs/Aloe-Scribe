@@ -178,6 +178,17 @@ class ParakeetTranscriber:
             log.debug(f"stream_feed: {e}")
             return ""
 
+    def stream_text(self) -> str:
+        """Plain transcript text from the current stream (to check it worked)."""
+        if self._stream is None:
+            return ""
+        try:
+            return self._run(
+                lambda: (getattr(self._stream.result, "text", "") or "").strip()
+            )
+        except Exception:
+            return ""
+
     def stream_markdown(self, title: str, date: datetime) -> str:
         """Build the transcript markdown from the current stream result."""
         if self._stream is None:

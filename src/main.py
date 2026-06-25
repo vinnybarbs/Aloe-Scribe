@@ -290,6 +290,7 @@ class AloeScribe:
         if not isinstance(self.transcriber, ParakeetTranscriber):
             return
         self._live_stop = threading.Event()
+        self._stream_offset = 44  # WAV header; shared so finalize can catch up
         meeting = self._current_meeting
         title = meeting.title if meeting else "Recording"
         start_dt = getattr(self, "_recording_start", datetime.now())
@@ -311,62 +312,57 @@ class AloeScribe:
         import numpy as np
 
         STEP = 1.5           # feed new audio every ~1.5 s
-        HEADER = 44          # WAV header the helper writes up front
         MD_EVERY = 30.0      # checkpoint the partial transcript to .md every ~30 s
-        offset = HEADER
         elapsed = 0.0
         last_md = 0.0
 
         # The transcriber runs all MLX work (open, feed, close) on its single
         # inference thread, so the stream stays on the thread that loaded the model.
+        # The stream stays open after this loop. Stop finalizes and closes it.
         if not self.transcriber.stream_open(depth=2):
             log.warning("Streaming unavailable (model not loaded)")
             return
         log.info("Streaming transcription started")
-        try:
-            while not stop_event.is_set():
-                if stop_event.wait(STEP):
-                    break
-                elapsed += STEP
-                try:
-                    if not wav_path.exists():
-                        continue
-                    if wav_path.stat().st_size - offset < 3200:  # < ~0.1 s new audio
-                        continue
-                    with open(wav_path, "rb") as f:
-                        f.seek(offset)
-                        raw = f.read()
-                    consumed = len(raw) - (len(raw) % 2)
-                    if consumed <= 0:
-                        continue
-                    offset += consumed
-                    samples = (
-                        np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
-                        / 32768.0
-                    )
-                    text = self.transcriber.stream_feed(samples)
-                    if text:
-                        self.tray.live_preview_set(text)
-                        if elapsed - last_md >= MD_EVERY:
-                            md = self.transcriber.stream_markdown(title, start_dt)
-                            if md:
-                                try:
-                                    md_path.parent.mkdir(parents=True, exist_ok=True)
-                                    md_path.write_text(md, encoding="utf-8")
-                                    last_md = elapsed
-                                except Exception as e:
-                                    log.debug(f"Streaming .md checkpoint failed: {e}")
-                except Exception as e:
-                    log.info(f"Streaming step error: {e}")
-        finally:
-            self.transcriber.stream_close()
+        while not stop_event.is_set():
+            if stop_event.wait(STEP):
+                break
+            elapsed += STEP
+            try:
+                if not wav_path.exists():
+                    continue
+                if wav_path.stat().st_size - self._stream_offset < 3200:  # < ~0.1 s
+                    continue
+                with open(wav_path, "rb") as f:
+                    f.seek(self._stream_offset)
+                    raw = f.read()
+                consumed = len(raw) - (len(raw) % 2)
+                if consumed <= 0:
+                    continue
+                self._stream_offset += consumed
+                samples = (
+                    np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
+                    / 32768.0
+                )
+                text = self.transcriber.stream_feed(samples)
+                if text:
+                    self.tray.live_preview_set(text)
+                    if elapsed - last_md >= MD_EVERY:
+                        md = self.transcriber.stream_markdown(title, start_dt)
+                        if md:
+                            try:
+                                md_path.parent.mkdir(parents=True, exist_ok=True)
+                                md_path.write_text(md, encoding="utf-8")
+                                last_md = elapsed
+                            except Exception as e:
+                                log.debug(f"Streaming .md checkpoint failed: {e}")
+            except Exception as e:
+                log.info(f"Streaming step error: {e}")
         log.info("Streaming transcription ended")
 
     def _stop_and_transcribe(self):
-        """Stop the recorder, transcribe, sync — all on a background thread."""
+        """Stop the recorder and finalize the transcript on a background thread."""
         self._cancel_max_duration_timer()
-        # Stop streaming and wait for it to release the model before the final
-        # batch pass (they must not use the model concurrently).
+        # Stop the live loop and wait for it to release the inference thread.
         if getattr(self, "_live_stop", None) is not None:
             self._live_stop.set()
         if getattr(self, "_stream_thread", None) is not None:
@@ -374,16 +370,78 @@ class AloeScribe:
             self._stream_thread = None
         wav_path = self.recorder.stop()
         if not wav_path:
+            try:
+                self.transcriber.stream_close()
+            except Exception:
+                pass
             self.tray.set_idle()
             return
 
-        # Run transcription in background so the tray stays responsive
-        thread = threading.Thread(
-            target=self._transcribe_and_sync,
-            args=(wav_path,),
-            daemon=True,
+        # Parakeet: the stream already holds the transcript, so finalize from it
+        # (fast). Whisper: there is no stream, so transcribe the file.
+        target = (
+            self._finalize_transcript
+            if isinstance(self.transcriber, ParakeetTranscriber)
+            else self._transcribe_and_sync
         )
-        thread.start()
+        threading.Thread(target=target, args=(wav_path,), daemon=True).start()
+
+    def _finalize_transcript(self, wav_path: Path):
+        """Save the streamed transcript. Feed the last bit of audio the live loop
+        did not reach, write the .md from the stream result, and we are done. No
+        full re-transcribe. Falls back to a batch transcribe only if the stream
+        produced nothing."""
+        import numpy as np
+
+        meeting = self._current_meeting
+        title = meeting.title if meeting else "Recording"
+        when = getattr(self, "_recording_start", None) or datetime.now()
+        md_path = getattr(self, "_md_path", None) or (
+            self.output_dir / f"{wav_path.stem}.md"
+        )
+
+        streamed_text = ""
+        md = ""
+        try:
+            offset = getattr(self, "_stream_offset", 44)
+            if wav_path.exists():
+                with open(wav_path, "rb") as f:
+                    f.seek(offset)
+                    raw = f.read()
+                consumed = len(raw) - (len(raw) % 2)
+                if consumed > 0:
+                    samples = (
+                        np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
+                        / 32768.0
+                    )
+                    self.transcriber.stream_feed(samples)
+            streamed_text = self.transcriber.stream_text()
+            md = self.transcriber.stream_markdown(title, when)
+        except Exception as e:
+            log.error(f"Stream finalize error: {e}")
+        finally:
+            try:
+                self.transcriber.stream_close()
+            except Exception:
+                pass
+
+        if streamed_text and md:
+            try:
+                md_path.parent.mkdir(parents=True, exist_ok=True)
+                md_path.write_text(md, encoding="utf-8")
+                try:
+                    wav_path.unlink()
+                except Exception:
+                    pass
+                self.tray.set_done(md_path)
+                self.syncer.enqueue(md_path)
+                self._current_meeting = None
+                return
+            except Exception as e:
+                log.error(f"Writing streamed transcript failed: {e}")
+
+        log.info("Stream produced no transcript. Falling back to a full transcribe.")
+        self._transcribe_and_sync(wav_path)
 
     def _transcribe_and_sync(self, wav_path: Path):
         meeting = self._current_meeting
