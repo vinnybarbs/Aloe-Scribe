@@ -231,7 +231,6 @@ class AloeScribeWindow(QMainWindow):
         self._sys_meter = None
         self._mic_level_bar: Optional[QProgressBar] = None
         self._sys_level_bar: Optional[QProgressBar] = None
-        self._sys_warn_label: Optional[QLabel] = None
         self._live_preview_box: Optional[QTextEdit] = None
 
         # Signals for thread-safe updates
@@ -312,7 +311,6 @@ class AloeScribeWindow(QMainWindow):
         self._stop_meters()
         self._mic_level_bar = None
         self._sys_level_bar = None
-        self._sys_warn_label = None
         self._live_preview_box = None
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
@@ -367,15 +365,8 @@ class AloeScribeWindow(QMainWindow):
             self._sys_level_bar.setTextVisible(False)
             self._sys_level_bar.setFixedHeight(8)
             self._content_layout.addWidget(self._sys_level_bar)
-
-            self._sys_warn_label = QLabel("")
-            self._sys_warn_label.setWordWrap(True)
-            self._sys_warn_label.setStyleSheet("color: #C94040; font-size: 10px;")
-            self._sys_warn_label.setVisible(False)
-            self._content_layout.addWidget(self._sys_warn_label)
         else:
             self._sys_level_bar = None
-            self._sys_warn_label = None
 
     def _start_meters(self):
         """Spawn meter readers for mic (avfoundation/ffmpeg) and system
@@ -447,19 +438,6 @@ class AloeScribeWindow(QMainWindow):
         if bar is not None:
             try:
                 bar.setValue(int(min(1.0, max(0.0, level)) * 1000))
-            except Exception:
-                pass
-        # Warn when something loud is playing into the system mix at idle, so the
-        # user closes it before it gets recorded. Threshold ~8% peak.
-        warn = self._sys_warn_label
-        if warn is not None:
-            try:
-                if self._state != "recording" and level > 0.08:
-                    warn.setText("⚠️ Audio is playing on your Mac — it will be "
-                                 "recorded. Close it (YouTube, music, video) first.")
-                    warn.setVisible(True)
-                else:
-                    warn.setVisible(False)
             except Exception:
                 pass
 
