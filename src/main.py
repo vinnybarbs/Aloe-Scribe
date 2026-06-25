@@ -296,7 +296,7 @@ class AloeScribe:
         try:
             self.tray.live_preview_clear()
             self.tray.live_preview_status(
-                "Live transcript will start appearing within a few seconds…"
+                "STT model is starting and the transcript will show within 30 seconds."
             )
         except Exception:
             pass
@@ -309,7 +309,6 @@ class AloeScribe:
 
     def _streaming_loop(self, wav_path, md_path, title, start_dt, stop_event):
         import numpy as np
-        import mlx.core as mx
 
         STEP = 1.5           # feed new audio every ~1.5 s
         HEADER = 44          # WAV header the helper writes up front
@@ -318,54 +317,49 @@ class AloeScribe:
         elapsed = 0.0
         last_md = 0.0
 
-        cm = self.transcriber.new_stream(depth=2)
-        if cm is None:
+        # The transcriber runs all MLX work (open, feed, close) on its single
+        # inference thread, so the stream stays on the thread that loaded the model.
+        if not self.transcriber.stream_open(depth=2):
             log.warning("Streaming unavailable (model not loaded)")
             return
         log.info("Streaming transcription started")
         try:
-            with cm as stream:
-                while not stop_event.is_set():
-                    if stop_event.wait(STEP):
-                        break
-                    elapsed += STEP
-                    try:
-                        if not wav_path.exists():
-                            continue
-                        new = wav_path.stat().st_size - offset
-                        if new < 3200:  # < ~0.1 s of new audio — wait
-                            continue
-                        with open(wav_path, "rb") as f:
-                            f.seek(offset)
-                            raw = f.read()
-                        consumed = len(raw) - (len(raw) % 2)
-                        if consumed <= 0:
-                            continue
-                        offset += consumed
-                        samples = (
-                            np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
-                            / 32768.0
-                        )
-                        stream.add_audio(mx.array(samples))
-                        result = stream.result
-                        text = (getattr(result, "text", "") or "").strip()
-                        if text:
-                            self.tray.live_preview_set(text)
-                            # Durability: write the partial transcript periodically.
-                            if elapsed - last_md >= MD_EVERY:
+            while not stop_event.is_set():
+                if stop_event.wait(STEP):
+                    break
+                elapsed += STEP
+                try:
+                    if not wav_path.exists():
+                        continue
+                    if wav_path.stat().st_size - offset < 3200:  # < ~0.1 s new audio
+                        continue
+                    with open(wav_path, "rb") as f:
+                        f.seek(offset)
+                        raw = f.read()
+                    consumed = len(raw) - (len(raw) % 2)
+                    if consumed <= 0:
+                        continue
+                    offset += consumed
+                    samples = (
+                        np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
+                        / 32768.0
+                    )
+                    text = self.transcriber.stream_feed(samples)
+                    if text:
+                        self.tray.live_preview_set(text)
+                        if elapsed - last_md >= MD_EVERY:
+                            md = self.transcriber.stream_markdown(title, start_dt)
+                            if md:
                                 try:
                                     md_path.parent.mkdir(parents=True, exist_ok=True)
-                                    md_path.write_text(
-                                        self.transcriber.markdown(result, title, start_dt),
-                                        encoding="utf-8",
-                                    )
+                                    md_path.write_text(md, encoding="utf-8")
                                     last_md = elapsed
                                 except Exception as e:
                                     log.debug(f"Streaming .md checkpoint failed: {e}")
-                    except Exception as e:
-                        log.info(f"Streaming step error: {e}")
-        except Exception as e:
-            log.info(f"Streaming session error: {e}")
+                except Exception as e:
+                    log.info(f"Streaming step error: {e}")
+        finally:
+            self.transcriber.stream_close()
         log.info("Streaming transcription ended")
 
     def _stop_and_transcribe(self):

@@ -780,7 +780,7 @@ class AloeScribeWindow(QMainWindow):
             self._live_preview_box.setReadOnly(True)
             self._live_preview_box.setFixedHeight(70)
             self._live_preview_box.setPlaceholderText(
-                "A transcript sample will appear here at ~20s — confirms it's working."
+                "STT model is starting. The transcript will show within 30 seconds."
             )
             self._content_layout.addWidget(self._live_preview_box)
 

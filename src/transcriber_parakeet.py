@@ -17,6 +17,7 @@ app startup isn't blocked by the ~1.2 GB weight load.
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -39,9 +40,17 @@ class ParakeetTranscriber:
         self.cache_dir = cache_dir
         self._model = None
         self._load_lock = threading.Lock()
-        # Serializes model inference so the live-preview loop and the final
-        # transcription never call the (non-reentrant) MLX model concurrently.
-        self._infer_lock = threading.Lock()
+        # MLX ties its GPU stream to the thread that first uses the model, so
+        # every model call (load, transcribe, streaming) MUST run on one thread.
+        # This single-worker executor is that thread. It also serializes the
+        # live stream and the final transcription, so they never collide.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aloe-infer")
+        self._stream_cm = None
+        self._stream = None
+
+    def _run(self, fn, *args, **kwargs):
+        """Run a model operation on the single inference thread and wait."""
+        return self._executor.submit(fn, *args, **kwargs).result()
 
     def _ensure_loaded(self) -> bool:
         """Lazy-load the Parakeet model. Returns False on failure."""
@@ -61,8 +70,11 @@ class ParakeetTranscriber:
                 return False
             log.info(f"Loading Parakeet model: {self.model_name}")
             try:
-                self._model = parakeet_mlx.from_pretrained(
-                    self.model_name, cache_dir=self.cache_dir
+                # Load on the inference thread so the GPU stream lives there.
+                self._model = self._run(
+                    parakeet_mlx.from_pretrained,
+                    self.model_name,
+                    cache_dir=self.cache_dir,
                 )
             except Exception as e:
                 log.error(f"Failed to load Parakeet model {self.model_name}: {e}")
@@ -101,13 +113,13 @@ class ParakeetTranscriber:
         try:
             # chunk_duration=120s with 15s overlap keeps long meetings under
             # Parakeet's max input window while preserving context across the
-            # seams. Tuned per parakeet-mlx README guidance.
-            with self._infer_lock:
-                result = self._model.transcribe(
-                    str(audio_path),
-                    chunk_duration=120.0,
-                    overlap_duration=15.0,
-                )
+            # seams. Run on the inference thread (see __init__).
+            result = self._run(
+                self._model.transcribe,
+                str(audio_path),
+                chunk_duration=120.0,
+                overlap_duration=15.0,
+            )
         except Exception as e:
             log.error(f"Parakeet transcription failed: {e}")
             return None
@@ -126,19 +138,72 @@ class ParakeetTranscriber:
         except Exception:
             pass
 
-    def new_stream(self, depth: int = 2):
-        """Return a StreamingParakeet context manager for real-time (cache-aware)
-        transcription — `with t.new_stream() as s: s.add_audio(mx_array)`; read
-        `s.result` for the growing transcript. Returns None if the model can't
-        load. `depth` trades fidelity vs. cost (higher = closer to a full pass)."""
-        if not self._ensure_loaded():
-            return None
-        return self._model.transcribe_stream(depth=depth)
+    # --- Live streaming (cache-aware). All MLX work runs on the inference
+    # thread via _run, so the stream is created, fed, and closed on the same
+    # thread that loaded the model. ---
 
-    def markdown(self, result, title: str, date: datetime) -> str:
-        """Build the Markdown transcript text from a result object (the live
-        stream's `.result`, or a batch transcription result)."""
-        return self._build_markdown(result, title, date)
+    def stream_open(self, depth: int = 2) -> bool:
+        """Open a streaming session. Returns False if the model can't load."""
+        if not self._ensure_loaded():
+            return False
+
+        def _open():
+            import mlx.core as mx  # noqa: F401 (ensures MLX is live on this thread)
+            cm = self._model.transcribe_stream(depth=depth)
+            stream = cm.__enter__()
+            return cm, stream
+
+        try:
+            self._stream_cm, self._stream = self._run(_open)
+            return True
+        except Exception as e:
+            log.warning(f"Could not open stream: {e}")
+            self._stream_cm = self._stream = None
+            return False
+
+    def stream_feed(self, samples) -> str:
+        """Feed one chunk of 16 kHz mono float32 samples (a numpy array) and
+        return the growing transcript text. Best-effort, returns '' on failure."""
+        if self._stream is None:
+            return ""
+
+        def _feed():
+            import mlx.core as mx
+            self._stream.add_audio(mx.array(samples))
+            return (getattr(self._stream.result, "text", "") or "").strip()
+
+        try:
+            return self._run(_feed)
+        except Exception as e:
+            log.debug(f"stream_feed: {e}")
+            return ""
+
+    def stream_markdown(self, title: str, date: datetime) -> str:
+        """Build the transcript markdown from the current stream result."""
+        if self._stream is None:
+            return ""
+        try:
+            return self._run(self._build_markdown, self._stream.result, title, date)
+        except Exception:
+            return ""
+
+    def stream_close(self):
+        """Close the streaming session."""
+        cm = self._stream_cm
+        self._stream_cm = self._stream = None
+        if cm is None:
+            return
+
+        def _close():
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:
+                pass
+
+        try:
+            self._run(_close)
+        except Exception:
+            pass
 
     def _build_markdown(self, result, title: str, date: datetime) -> str:
         """Build the transcript file: a machine-readable YAML header, then the
