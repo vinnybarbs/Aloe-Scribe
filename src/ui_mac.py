@@ -525,19 +525,14 @@ class AloeScribeWindow(QMainWindow):
         QTimer.singleShot(600, lambda b=btn: b.setEnabled(True))
         self._content_layout.addWidget(btn)
 
-        # Fine print — recording/transcription law reminder (hover for detail).
+        # Fine print — recording/transcription law reminder.
         legal = QLabel(
-            "ⓘ  Check state & federal recording laws — disclose transcription to attendees"
+            "Check state & federal recording laws and disclose transcription "
+            "to attendees in all-party states."
         )
         legal.setObjectName("finePrint")
         legal.setWordWrap(True)
         legal.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        legal.setToolTip(
-            "Recording and transcription laws vary by state (one-party vs. all-party\n"
-            "consent). Always check your applicable state and federal laws, and disclose\n"
-            "recording/transcription to attendees when required. You are responsible for\n"
-            "obtaining any necessary consent."
-        )
         self._content_layout.addWidget(legal)
 
         self._update_status("● Idle", "statusIdle")
