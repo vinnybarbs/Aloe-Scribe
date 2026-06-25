@@ -141,49 +141,29 @@ class ParakeetTranscriber:
         return self._build_markdown(result, title, date)
 
     def _build_markdown(self, result, title: str, date: datetime) -> str:
-        date_str = date.strftime("%B %d, %Y")
-        time_str = date.strftime("%I:%M %p")
-
-        sentences_for_dur = getattr(result, "sentences", None) or []
+        """Build the transcript file: a machine-readable YAML header, then the
+        timestamped transcript. No prose. This file is a handoff for a
+        downstream agent to enrich and summarize, so it carries data, not
+        formatting."""
+        sentences = getattr(result, "sentences", None) or []
         duration_s = max(
-            (float(getattr(s, "end", 0) or 0) for s in sentences_for_dur),
+            (float(getattr(s, "end", 0) or 0) for s in sentences),
             default=0.0,
         )
 
-        lines = [
-            build_frontmatter(title, date, duration_s, source="aloe-scribe-mac"),
-            f"# {title}",
-            f"**Date:** {date_str}  ",
-            f"**Time:** {time_str}  ",
-            f"**Transcribed by:** Aloe Scribe (Parakeet)  ",
-            "",
-            "---",
-            "",
-            "## Full Transcript",
-            "",
-        ]
+        lines = [build_frontmatter(title, date, duration_s, source="aloe-scribe-mac"), ""]
 
-        sentences = getattr(result, "sentences", None) or []
         if not sentences:
-            text = getattr(result, "text", "").strip()
+            text = (getattr(result, "text", "") or "").strip()
             if text:
                 lines.append(text)
-            else:
-                lines.append("_No speech detected._")
         else:
             for s in sentences:
-                start_s = int(getattr(s, "start", 0) or 0)
-                m, sec = divmod(start_s, 60)
-                stamp = f"{m:02d}:{sec:02d}"
                 text = (getattr(s, "text", "") or "").strip()
                 if not text:
                     continue
-                lines.append(f"`{stamp}` {text}")
-                lines.append("")
+                start_s = int(getattr(s, "start", 0) or 0)
+                m, sec = divmod(start_s, 60)
+                lines.append(f"[{m:02d}:{sec:02d}] {text}")
 
-        lines += [
-            "---",
-            "",
-            f"_Transcript generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · Aloe Scribe_",
-        ]
-        return "\n".join(lines)
+        return "\n".join(lines) + "\n"

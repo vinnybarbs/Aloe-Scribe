@@ -557,8 +557,8 @@ class AloeScribeWindow(QMainWindow):
 
         sys_combo = QComboBox()
         sys_options = [
-            ("system", "On — Capture system audio"),
-            ("off", "Off — Mic only (in-person)"),
+            ("system", "On, capture system audio"),
+            ("off", "Off, mic only (in-person)"),
         ]
         # Default to "On" unless config explicitly says off.
         current = (self._selected_system or "").strip().lower()
@@ -1146,10 +1146,10 @@ class AloeScribeApp:
         if self._tray is None:
             return
         status_map = {
-            "idle": "Aloe Scribe — Idle",
-            "recording": "Recording…",
-            "processing": "Transcribing…",
-            "done": "Done — transcript saved",
+            "idle": "Aloe Scribe",
+            "recording": "Recording",
+            "processing": "Transcribing",
+            "done": "Transcript saved",
         }
         state = self._window._state if self._window else "idle"
         try:
@@ -1221,8 +1221,8 @@ class AloeScribeApp:
             self._window.set_done(output_path)
             import notifications
             notifications.send(
-                "Aloe Scribe — Done",
-                f"Transcript saved: {output_path.name}",
+                "Aloe Scribe",
+                f"Transcript saved. {output_path.name}",
             )
 
     def set_idle(self):

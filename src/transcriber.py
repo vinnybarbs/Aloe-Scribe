@@ -176,37 +176,16 @@ class Transcriber:
         title: str,
         date: datetime,
     ) -> str:
-        """Build the final Markdown file."""
-        date_str = date.strftime("%B %d, %Y")
-        time_str = date.strftime("%I:%M %p")
-        iso_date = date.strftime("%Y-%m-%d")
-
+        """Build the transcript file: a machine-readable YAML header, then the
+        timestamped transcript. No prose. This file is a handoff for a
+        downstream agent to enrich and summarize."""
         duration_s = max((seg.end_ms for seg in segments), default=0) / 1000.0
 
-        lines = [
-            build_frontmatter(title, date, duration_s, source="aloe-scribe"),
-            f"# {title}",
-            f"**Date:** {date_str}  ",
-            f"**Time:** {time_str}  ",
-            f"**Transcribed by:** Aloe Scribe  ",
-            "",
-            "---",
-            "",
-            "## Full Transcript",
-            "",
-        ]
+        lines = [build_frontmatter(title, date, duration_s, source="aloe-scribe"), ""]
 
-        if not segments:
-            lines.append("_No speech detected._")
-        else:
-            for seg in segments:
-                lines.append(f"`{seg.timestamp()}` {seg.text}")
-                lines.append("")
+        for seg in segments:
+            text = (seg.text or "").strip()
+            if text:
+                lines.append(f"[{seg.timestamp()}] {text}")
 
-        lines += [
-            "---",
-            "",
-            f"_Transcript generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · Aloe Scribe_",
-        ]
-
-        return "\n".join(lines)
+        return "\n".join(lines) + "\n"

@@ -75,7 +75,7 @@ class NativeTray:
         on_toggle: Optional[Callable] = None,
     ):
         self._icon_path = Path(icon_path)
-        self._status_text = "Aloe Scribe — Idle"
+        self._status_text = "Aloe Scribe"
 
         # Strong references — without these PyObjC garbage-collects the
         # status item and the icon vanishes a beat later.
