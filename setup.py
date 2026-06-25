@@ -32,6 +32,15 @@ OPTIONS = {
         "ui",
         "native_tray",
         "tomli",
+        # Stdlib terminal modules that click (pulled in transitively by the
+        # parakeet/huggingface chain) imports LAZILY inside a function, so
+        # py2app's static graph never sees them and drops them from the frozen
+        # stdlib. Without these the bundled app fails with "No module named
+        # 'tty'" the moment it tries to load Parakeet, which looks like
+        # "parakeet-mlx not installed." Force them in.
+        "tty",
+        "termios",
+        "pty",
     ],
     "packages": [
         "PyQt6",

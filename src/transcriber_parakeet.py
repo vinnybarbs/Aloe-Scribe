@@ -62,10 +62,22 @@ class ParakeetTranscriber:
             try:
                 import parakeet_mlx  # heavy import — keep inside the lock
             except ImportError as e:
-                log.error(
-                    "parakeet-mlx not installed. Run: "
-                    ".venv/bin/pip install parakeet-mlx"
-                )
+                missing = getattr(e, "name", "") or ""
+                if missing in ("parakeet_mlx", "mlx"):
+                    log.error(
+                        "parakeet-mlx not installed. Run: "
+                        ".venv/bin/pip install parakeet-mlx"
+                    )
+                else:
+                    # A dependency or stdlib module is missing — common in a
+                    # frozen py2app bundle that dropped a lazily-imported
+                    # stdlib module (e.g. 'tty' via click). This is NOT the
+                    # same as parakeet-mlx being absent; say so plainly.
+                    log.error(
+                        f"Parakeet import failed: missing module "
+                        f"'{missing or 'unknown'}'. parakeet-mlx itself may be "
+                        f"installed; a dependency could not load."
+                    )
                 log.error(f"  underlying error: {e}")
                 return False
             log.info(f"Loading Parakeet model: {self.model_name}")
