@@ -1,34 +1,32 @@
 # Aloe Scribe
 
-Local meeting transcription for macOS and Linux.
-Records mic + system audio, transcribes locally with Parakeet TDT (or Whisper), saves Markdown transcripts.
+Local meeting transcription for macOS and Linux. It records your mic plus system audio, transcribes on your Mac in real time with Parakeet TDT (or Whisper), and saves a Markdown transcript. Audio never leaves the machine.
 
-On macOS, system audio is captured natively via **ScreenCaptureKit** — no BlackHole / Multi-Output Device setup required.
+On macOS, system audio is captured natively with ScreenCaptureKit. No BlackHole or Multi-Output Device setup.
 
-> **Repo layout — Mac vs iPhone.** This **`main`** branch is the **macOS desktop app** (`src/`, `scripts/`, `tools/`).
-> The separate **iPhone app** (Xcode / SwiftUI) lives **only on the `ios` branch** (`ios/`).
-> Do all desktop work on `main`; `git checkout ios` only for the phone app. `main` never contains `ios/`.
+> Repo layout, Mac vs iPhone. This `main` branch is the macOS desktop app (`src/`, `scripts/`, `tools/`). The iPhone app (Xcode, SwiftUI) lives only on the `ios` branch (`ios/`). Do all desktop work on `main`. Run `git checkout ios` only for the phone app. `main` never contains `ios/`.
 
 ## How it works
 
-1. Open the Aloe Scribe window and click **Start Recording Now**
-2. It records silently in the background (mic + system audio mixed)
-3. Click **Stop & Transcribe** — Parakeet TDT runs locally on Apple Silicon
-4. The Markdown transcript saves to your chosen folder (default `~/meetings/`)
-5. Optionally syncs to SharePoint via rclone
+1. Open Aloe Scribe and click Start recording.
+2. It records in the background, mic and system audio mixed.
+3. A live transcript appears on screen as you talk, so you can see it is working.
+4. Click Stop. A clean full transcript saves to your folder (default `~/meetings/`).
+5. It optionally syncs to SharePoint with rclone.
 
-Recordings auto-stop after the `max_duration_minutes` cap (default 120) so a forgotten session can't run forever.
+The transcript streams during the recording and is checkpointed to the `.md` file every 30 seconds, so a crash mid-call does not lose what was already said. At Stop, one clean full pass over the whole recording overwrites the file as the final version.
 
-If the app crashes mid-call and leaves an orphan `.wav` behind, recover it with:
+Recordings auto-stop after the `max_duration_minutes` cap (default 120), so a forgotten session cannot run forever.
+
+If the app crashes and leaves an orphan `.wav` behind, recover it:
 
 ```bash
 python3 scripts/transcribe_wav.py ~/meetings/2026-04-17-1127-busy.wav
 ```
 
-## Install — macOS
+## Install, macOS
 
-**New machine?** One command sets up everything — Python env, dependencies, the
-Parakeet model (downloaded from GitHub, **not** Hugging Face), and the app:
+New machine. One command sets up the Python env, the dependencies, the Parakeet model (downloaded from GitHub, not Hugging Face), and the app:
 
 ```bash
 git clone https://github.com/vinnybarbs/Aloe-Scribe.git ~/aloe-scribe
@@ -36,47 +34,38 @@ cd ~/aloe-scribe
 bash scripts/install-mac.sh
 ```
 
-> Already have Aloe Scribe installed? Don't re-run the installer — it resets
-> your settings. Use the updater instead:
-> [Updating to the latest version](#updating-to-the-latest-version-macos).
+> Already have Aloe Scribe installed? Do not re-run the installer, it resets your settings. Use the updater instead. See [Updating to the latest version](#updating-to-the-latest-version-macos).
 
-The installer handles everything:
-- Homebrew packages (ffmpeg, python@3.12, cmake)
-- Python venv with PyQt6, pyobjc, and `parakeet-mlx` (default transcriber — first launch downloads the ~700 MB MLX model into `~/.cache/huggingface/`)
-- Compiles the Swift `aloe-audio-capture` helper that drives ScreenCaptureKit
-- Builds the `.app` via py2app, and code-signs it with a **stable self-signed identity** (created automatically by `scripts/create-signing-cert.sh`) so macOS keeps your Screen Recording / Microphone permissions across future updates instead of revoking them on every rebuild
-- Installs to `/Applications/Aloe Scribe.app`
+The installer does the following:
+- Installs Homebrew packages (ffmpeg, python@3.12, cmake).
+- Builds a Python venv with PyQt6, pyobjc, and hash-pinned dependencies (`--require-hashes`).
+- Downloads the Parakeet model from this repo's GitHub Release and verifies the checksum.
+- Compiles the Swift `aloe-audio-capture` helper that drives ScreenCaptureKit.
+- Builds the `.app` with py2app and signs it with a stable self-signed identity (created by `scripts/create-signing-cert.sh`), so macOS keeps your Screen Recording and Microphone permissions across updates instead of revoking them on every rebuild.
+- Installs to `/Applications/Aloe Scribe.app`.
 
-**whisper.cpp is not installed by default** — Parakeet is the default backend on macOS and it doesn't need it. If you specifically want whisper as a fallback (multilingual, or non–Apple-Silicon hardware), run:
+whisper.cpp is not installed by default. Parakeet is the macOS default and does not need it. If you want whisper as a fallback (multilingual, or non-Apple-Silicon hardware), run:
 
 ```bash
 INSTALL_WHISPER=1 bash scripts/install-mac.sh
 ```
 
-That builds whisper.cpp with Metal acceleration and downloads `large-v3-turbo` (~1.6 GB).
+That builds whisper.cpp with Metal acceleration and downloads `large-v3-turbo` (about 1.6 GB).
 
-Once installed, open **Aloe Scribe** from Spotlight (Cmd+Space) or `/Applications`.
+Once installed, open Aloe Scribe from Spotlight (Cmd+Space) or `/Applications`.
 
-### Transcription model — no Hugging Face required
+### Transcription model, no Hugging Face required
 
-The Parakeet weights (~2.3 GB) are hosted as a **GitHub Release** on this repo,
-not pulled from Hugging Face. `install-mac.sh` downloads them from the release,
-reassembles + checksum-verifies, drops them in `models/parakeet-tdt-0.6b-v3/`,
-and points the app at that local path. The app then loads the model straight
-from disk — Hugging Face is never contacted (it's forced offline at runtime).
-This means installs work in environments where `huggingface.co` is blocked.
+The Parakeet weights (about 2.3 GB) are hosted as a GitHub Release on this repo, not pulled from Hugging Face. `install-mac.sh` downloads them from the release, reassembles them, verifies the checksum, drops them in `models/parakeet-tdt-0.6b-v3/`, and points the app at that local path. The app loads the model from disk and forces Hugging Face offline at runtime, so it never contacts `huggingface.co`. Installs work where that host is blocked.
 
-**Maintainers — publishing/refreshing the model release** (one-time, needs the
-model in your local HF cache or a local dir):
+Maintainers publish or refresh the model release with the model in the local HF cache or a local dir:
 
 ```bash
 bash scripts/publish-model.sh            # uses the HF-cache copy
 bash scripts/publish-model.sh /path/dir  # or an explicit model dir
 ```
 
-That splits `model.safetensors` into <2 GiB parts (GitHub's asset limit),
-writes a `SHA256SUMS` manifest, and uploads everything to the
-`model-parakeet-tdt-0.6b-v3` release. Model license: CC-BY-4.0 (NVIDIA).
+That splits `model.safetensors` into parts under 2 GiB (the GitHub asset limit), writes a `SHA256SUMS` manifest, and uploads everything to the `model-parakeet-tdt-0.6b-v3` release. Model license: CC-BY-4.0 (NVIDIA).
 
 ## Updating to the latest version (macOS)
 
@@ -85,45 +74,33 @@ cd ~/aloe-scribe
 bash scripts/update-mac.sh
 ```
 
-That pulls the newest code, **preserves your settings** (calendar URL, mic,
-output folder — they live inside the installed app bundle), migrates the
-Parakeet model onto the local GitHub-hosted copy if you're still on the old
-Hugging Face one, and rebuilds + reinstalls the app. A relaunch alone is
-**not** enough: the app code is frozen into the bundle, so an update has to
-rebuild it.
+That pulls the newest code, keeps your settings (calendar URL, mic, output folder live inside the installed app bundle), creates the stable signing identity if it is missing, and rebuilds and reinstalls the app. A relaunch alone is not enough. The app code is frozen into the bundle, so an update has to rebuild it.
 
-> **First update only:** if you installed before settings were untracked, your
-> local `config/config.toml` may still be tracked by git and block the pull.
-> Stash it once — your live settings are safe inside the installed app and get
-> restored automatically — then it's just `update-mac.sh` from then on:
+> First update only. If you installed before settings were untracked, your local `config/config.toml` may still be tracked by git and block the pull. Stash it once. Your live settings are safe inside the installed app and get restored automatically. After that it is just `update-mac.sh`:
 > ```bash
 > cd ~/aloe-scribe
 > git stash
 > bash scripts/update-mac.sh
 > ```
 
-**First-run permissions.** On first launch macOS will prompt for:
-- **Microphone** — required, even if you only want system audio.
-- **Screen Recording** — required for capturing system audio via ScreenCaptureKit. No video is ever captured or written, only audio.
+First-run permissions. On first launch macOS prompts for two things:
+- Microphone, required even if you only want system audio.
+- Screen Recording, required to capture system audio through ScreenCaptureKit. No video is ever captured or written, only audio.
 
-Both grants attach to the unified `Aloe Scribe` identity (one row in *System Settings → Privacy & Security*, not separate entries per binary). Thanks to the stable signing identity, you grant these **once** — updates won't make you re-grant.
+Both grants attach to one `Aloe Scribe` identity, one row in System Settings, Privacy and Security, not separate entries per binary. With the stable signing identity you grant these once. Updates do not make you re-grant.
 
-> **Tip — close background media before recording.** ScreenCaptureKit captures
-> your Mac's *entire* system-audio mix, so a YouTube tab, music, or a video
-> editor playing in the background gets recorded **on top of** your meeting and
-> can bury the speech. The idle screen shows a **SYSTEM AUDIO LEVEL** meter and a
-> red warning when something is playing — glance at it before you hit record.
+> Close background media before recording. ScreenCaptureKit captures your Mac's entire system-audio mix, so a YouTube tab, music, or a video editor playing in the background gets recorded on top of your meeting and can bury the speech. The idle screen shows a System audio level meter. Glance at it before you hit record.
 
 ### Audio setup
 
-In the idle screen you'll see:
-- **Microphone** dropdown — real input devices, mic auto-detection prefers external mics over built-in.
-- **System Audio** dropdown — `On — Capture system audio` (default) or `Off — Mic only (in-person)`.
-- **Save transcripts to** with a **Choose…** button — picks the output folder and writes it back to `config.toml`.
+The idle screen has three controls:
+- Microphone dropdown, the real input devices. Auto-detect prefers an external mic over the built-in one.
+- System audio dropdown, "On, capture system audio" (default) or "Off, mic only (in-person)".
+- Save transcripts to, with a Choose button that sets the output folder and writes it back to `config.toml`.
 
-No BlackHole, no Multi-Output Device, no Audio MIDI Setup gymnastics.
+No BlackHole, no Multi-Output Device, no Audio MIDI Setup.
 
-## Install — Linux
+## Install, Linux
 
 ```bash
 git clone https://github.com/vinnybarbs/Aloe-Scribe.git ~/aloe-scribe
@@ -131,10 +108,10 @@ cd ~/aloe-scribe
 bash scripts/install.sh
 ```
 
-The app runs as a systemd user service with a GTK window and AppIndicator3 tray icon.
+The app runs as a systemd user service with a GTK window and an AppIndicator3 tray icon.
 
 ```bash
-# Start / stop
+# Start and stop
 systemctl --user start aloe-scribe
 systemctl --user stop aloe-scribe
 
@@ -144,31 +121,31 @@ journalctl --user -u aloe-scribe -f
 
 ## Transcription backends
 
-Two backends, switchable via `config.toml`'s `[transcriber] backend = "parakeet"` or `"whisper"`.
+Two backends, switchable in `config.toml` with `[transcriber] backend = "parakeet"` or `"whisper"`.
 
-| Backend | Default? | Strengths | Tradeoffs |
+| Backend | Default | Strengths | Tradeoffs |
 |---|---|---|---|
-| **Parakeet TDT v3** (`parakeet-mlx`) | ✅ macOS default | ~15–20× realtime on Apple Silicon. Doesn't hallucinate `"Thank you."` over silence. Better accuracy on technical/IT English. ~700 MB model, downloaded from HuggingFace on first run, cached in `~/.cache/huggingface/`. | English-only. Treats music/non-speech as silence (a feature for meetings, a bug for podcasts). |
-| **whisper.cpp** | Linux default, macOS fallback | Multilingual. Mature. Runs on any CPU. | Hallucinates on silence (mitigated with `-mc 0 -sns` flags). Slower. |
+| Parakeet TDT v3 (`parakeet-mlx`) | macOS default | 15 to 20 times realtime on Apple Silicon, plus cache-aware streaming for the live transcript. Does not hallucinate "Thank you." over silence. Good accuracy on technical English. Model ships from this repo's GitHub Release, no Hugging Face. | English only. Treats music and non-speech as silence, which suits meetings. |
+| whisper.cpp | Linux default, macOS fallback | Multilingual. Mature. Runs on any CPU. | Hallucinates on silence, reduced with `-mc 0 -sns`. Slower. |
 
-To swap: edit `config.toml` and restart the app.
+To swap, edit `config.toml` and restart the app:
 
 ```toml
 [transcriber]
-backend = "parakeet"                                      # or "whisper"
+backend = "parakeet"   # or "whisper"
 parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 ```
 
-### Whisper model (if using the whisper backend)
+### Whisper model (whisper backend only)
 
-`large-v3-turbo` (~1.6 GB) is the recommended default — `install-mac.sh` downloads it for you. Other options:
+`large-v3-turbo` (about 1.6 GB) is the default and `install-mac.sh` downloads it for you. Other options:
 
 | Model | Size | Speed | Notes |
 |---|---|---|---|
-| `small` | 488 MB | ~16× realtime | Fine for clear single speakers |
-| `medium.en` | ~1.4 GB | ~6× realtime | English-only, big jump on technical speech |
-| `large-v3-turbo` | ~1.6 GB | ~3–4× realtime | **Default** — near-large accuracy |
-| `large-v3` | ~3.1 GB | ~1.5–2× realtime | Best accuracy, biggest disk |
+| `small` | 488 MB | about 16x realtime | Fine for clear single speakers |
+| `medium.en` | about 1.4 GB | about 6x realtime | English only, a jump on technical speech |
+| `large-v3-turbo` | about 1.6 GB | about 3 to 4x realtime | Default, near-large accuracy |
+| `large-v3` | about 3.1 GB | about 1.5 to 2x realtime | Best accuracy, biggest disk |
 
 After downloading, set `model_path` in `config/config.toml`.
 
@@ -193,16 +170,16 @@ binary_path = "~/whisper.cpp/build/bin/whisper-cli"
 model_path  = "~/whisper.cpp/models/ggml-large-v3-turbo.bin"
 
 [output]
-local_dir = "~/meetings"   # or change via the Choose… button in the app
+local_dir = "~/meetings"   # or change with the Choose button in the app
 
 [app]
-# Hard cap on recording length — auto-stops + transcribes after this many minutes
+# Hard cap on recording length. Auto-stops and transcribes after this many minutes.
 max_duration_minutes = 120
 ```
 
 ## Health check
 
-Test that your mic, ffmpeg, and Whisper are all working:
+Test that your mic, ffmpeg, and the transcriber work:
 
 ```bash
 # macOS
@@ -212,7 +189,7 @@ bash scripts/health-check-mac.sh
 bash scripts/health-check.sh
 ```
 
-Records a short clip, checks audio levels, and transcribes it.
+It records a short clip, checks audio levels, and transcribes it.
 
 ## SharePoint sync (optional)
 
@@ -232,29 +209,26 @@ rclone_remote = "sharepoint:Documents/Meetings"
 
 ## Output format
 
-Transcripts are saved as Markdown in `~/meetings/`:
+The transcript is a handoff file. A downstream agent reads it to enrich with calendar and email context and to summarize. So it carries data, not formatting: a machine-readable YAML header, then the timestamped transcript. No prose.
 
 ```
 ~/meetings/2026-04-07-1400-weekly-sync.md
 ```
 
 ```markdown
-# Weekly Sync
-**Date:** April 7, 2026
-**Time:** 02:00 PM
-**Transcribed by:** Aloe Scribe
-
+---
+title: "Weekly sync"
+date: 2026-04-07T14:00:00-06:00
+end: 2026-04-07T14:32:00-06:00
+duration_min: 32
+source: aloe-scribe-mac
 ---
 
-## Full Transcript
-
-`00:00` Hey, so today we need to discuss the timeline...
-`00:14` Right, and the deadline for the API is next Friday...
-
----
-
-_Transcript generated 2026-04-07 14:45 · Aloe Scribe_
+[00:00] Hey, so today we need to discuss the timeline.
+[00:14] Right, and the deadline for the API is next Friday.
 ```
+
+The header carries the meeting as a time window, so the agent can match the calendar event and infer attendees from there. Desktop and iOS write the same header fields.
 
 ## Project structure
 
@@ -263,18 +237,19 @@ aloe-scribe/
 ├── config/
 │   └── config.toml             # your settings
 ├── src/
-│   ├── main.py                 # entry point + orchestration
-│   ├── ui.py                   # Linux GTK + AppIndicator3 UI
+│   ├── main.py                 # entry point and orchestration
+│   ├── ui.py                   # Linux GTK and AppIndicator3 UI
 │   ├── ui_mac.py               # macOS PyQt6 UI
 │   ├── native_tray.py          # macOS NSStatusItem (menu-bar leaf icon)
 │   ├── recorder.py             # Linux audio (PulseAudio)
 │   ├── recorder_mac.py         # macOS recorder driver (spawns audio helper)
 │   ├── transcriber.py          # whisper.cpp wrapper
-│   ├── transcriber_parakeet.py # parakeet-mlx wrapper (macOS default)
-│   ├── audio_meter.py          # mic VU bar reader
-│   ├── meeting.py              # tiny dataclass for recording label
+│   ├── transcriber_parakeet.py # parakeet-mlx wrapper (macOS default, streaming)
+│   ├── audio_meter.py          # mic and system VU bar reader
+│   ├── frontmatter.py          # transcript YAML header
+│   ├── meeting.py              # tiny dataclass for the recording label
 │   ├── syncer.py               # rclone SharePoint sync
-│   └── notifications.py        # NSUserNotification + notify-send
+│   └── notifications.py        # NSUserNotification and notify-send
 ├── tools/
 │   └── aloe-audio-capture/
 │       └── main.swift          # ScreenCaptureKit system-audio helper
@@ -283,39 +258,41 @@ aloe-scribe/
 ├── scripts/
 │   ├── install.sh              # Linux installer
 │   ├── install-mac.sh          # macOS installer (one-shot setup)
-│   ├── build-app.sh            # rebuild the macOS .app after code changes
+│   ├── update-mac.sh           # pull, rebuild, reinstall, keep settings
+│   ├── build-app.sh            # rebuild the macOS .app after a code change
 │   ├── build-helper.sh         # rebuild only the Swift audio helper
+│   ├── create-signing-cert.sh  # one-time stable signing identity
+│   ├── fetch-model.sh          # download the model from the GitHub Release
+│   ├── publish-model.sh        # maintainers: publish the model release
 │   ├── transcribe_wav.py       # recover orphan WAVs after a crash
-│   ├── health-check.sh         # Linux audio/transcription test
-│   └── health-check-mac.sh     # macOS audio/transcription test
+│   ├── health-check.sh         # Linux audio and transcription test
+│   └── health-check-mac.sh     # macOS audio and transcription test
 ├── assets/
 │   └── icon.png                # aloe leaf icon
-├── setup.py                    # py2app config for macOS .app bundle
+├── setup.py                    # py2app config for the macOS .app bundle
 ├── requirements.txt            # Linux Python dependencies
-└── requirements-mac.txt        # macOS Python dependencies
+└── requirements-mac.txt        # macOS Python dependencies (hash-pinned)
 ```
 
 ## Rebuilding after a code change (macOS)
 
-The app's Python source is frozen into the bundle at build time, so a code
-change requires a rebuild — relaunching alone won't pick it up:
+The Python source is frozen into the bundle at build time, so a code change needs a rebuild. Relaunching alone will not pick it up.
 
 ```bash
 bash scripts/build-app.sh
 ```
 
-(To also pull the latest from GitHub and preserve your settings in one step,
-use `scripts/update-mac.sh` — see [Updating](#updating-to-the-latest-version-macos).)
+To also pull the latest from GitHub and keep your settings in one step, use `scripts/update-mac.sh`. See [Updating](#updating-to-the-latest-version-macos).
 
-That recompiles `bin/aloe-audio-capture`, re-runs py2app, re-signs everything with the stable ad-hoc identifiers (`com.aloescribe.app`, `com.aloescribe.audio-capture`), and installs the result to `/Applications`.
+That recompiles `bin/aloe-audio-capture`, re-runs py2app, signs everything with the stable identity, and installs the result to `/Applications`.
 
 ## Logs
 
 ```bash
-# macOS — Python-side
+# macOS, Python side
 cat /tmp/aloe-scribe.log
 
-# macOS — Swift audio-capture helper stderr (per-recording blocks)
+# macOS, Swift audio-capture helper stderr (per-recording blocks)
 cat /tmp/aloe-helper.log
 
 # Linux
