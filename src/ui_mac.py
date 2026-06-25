@@ -119,6 +119,7 @@ _STYLESHEET = """
     QLabel#statusProcess { color: #3878C8; font-size: 12px; }
     QLabel#statusDone    { color: #2F8F5B; font-size: 12px; }
     QLabel#deviceLabel   { font-size: 12px; color: #8B948C; }
+    QLabel#finePrint     { font-size: 10px; color: #A6AEA8; }
 
     QPushButton#btnStart {
         background-color: #2F8F5B; color: #FFFFFF; border: none;
@@ -511,7 +512,7 @@ class AloeScribeWindow(QMainWindow):
         # Recovery dropdown: pick an un-transcribed recording and run it.
         # Only appears when such WAVs exist; grow the window to fit it.
         has_recordings = self._build_transcribe_file_row()
-        base = 550 if self._system_on() else 500  # +50 for the system-audio meter
+        base = 586 if self._system_on() else 536  # includes the law fine-print line  # +50 for the system-audio meter
         self.setFixedSize(344, base + (90 if has_recordings else 0))
 
         btn = QPushButton("Start recording")
@@ -523,6 +524,21 @@ class AloeScribeWindow(QMainWindow):
         btn.setEnabled(False)
         QTimer.singleShot(600, lambda b=btn: b.setEnabled(True))
         self._content_layout.addWidget(btn)
+
+        # Fine print — recording/transcription law reminder (hover for detail).
+        legal = QLabel(
+            "ⓘ  Check state & federal recording laws — disclose transcription to attendees"
+        )
+        legal.setObjectName("finePrint")
+        legal.setWordWrap(True)
+        legal.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        legal.setToolTip(
+            "Recording and transcription laws vary by state (one-party vs. all-party\n"
+            "consent). Always check your applicable state and federal laws, and disclose\n"
+            "recording/transcription to attendees when required. You are responsible for\n"
+            "obtaining any necessary consent."
+        )
+        self._content_layout.addWidget(legal)
 
         self._update_status("● Idle", "statusIdle")
         self._start_meters()
