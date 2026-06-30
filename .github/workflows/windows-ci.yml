@@ -54,6 +54,9 @@ jobs:
           pip install pyinstaller==6.11.1
       - name: Generate icon.ico
         run: python -c "from PIL import Image; Image.open('assets/icon.png').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+      - name: Seed config.toml (gitignored, needed by the bundle)
+        shell: pwsh
+        run: if (-not (Test-Path config/config.toml)) { Copy-Item config/config.toml.example config/config.toml }
       - name: Build the .exe
         run: pyinstaller --noconfirm --clean aloe-scribe-windows.spec
       - name: Verify the .exe was produced

@@ -11,12 +11,17 @@
 # the frozen .exe has everything. If the built app fails with a missing module
 # or data file, add it to hiddenimports / datas and rebuild on the machine.
 
+import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
+# config.toml is gitignored (per-user, seeded from the example). Always ship the
+# template so a clean build works; ship the live config.toml too if it exists.
 datas = [
     ("assets/icon.png", "assets"),
-    ("config/config.toml", "config"),
+    ("config/config.toml.example", "config"),
 ]
+if os.path.exists("config/config.toml"):
+    datas.append(("config/config.toml", "config"))
 binaries = []
 hiddenimports = [
     "transcriber_faster_whisper",  # selected via a dynamic import in main.py
