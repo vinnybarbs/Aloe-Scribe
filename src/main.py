@@ -84,6 +84,9 @@ from syncer import Syncer
 if sys.platform == "darwin":
     from ui_mac import AloeScribeApp
     from recorder_mac import Recorder, list_sources
+elif sys.platform == "win32":
+    from ui_windows import AloeScribeApp
+    from recorder_windows import Recorder, list_sources
 else:
     from ui import AloeScribeApp
     from recorder import Recorder, list_sources
@@ -137,6 +140,24 @@ class AloeScribe:
                 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
             log.info(f"Transcriber backend: parakeet ({model_id})")
             self.transcriber = ParakeetTranscriber(model=model_id)
+        elif backend == "faster_whisper":
+            from transcriber_faster_whisper import FasterWhisperTranscriber
+
+            tcfg = config.get("transcriber", {})
+            model_id = tcfg.get(
+                "faster_whisper_model", FasterWhisperTranscriber.DEFAULT_MODEL
+            )
+            # A local model folder (the Windows install fetches weights from
+            # GitHub, not Hugging Face) keeps transcription fully offline.
+            if Path(model_id).expanduser().is_dir():
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            log.info(f"Transcriber backend: faster-whisper ({model_id})")
+            self.transcriber = FasterWhisperTranscriber(
+                model=model_id,
+                device=tcfg.get("faster_whisper_device", "auto"),
+                language=tcfg.get("language", "en"),
+            )
         else:
             log.info("Transcriber backend: whisper.cpp")
             self.transcriber = Transcriber(

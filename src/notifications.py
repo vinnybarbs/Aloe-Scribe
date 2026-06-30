@@ -24,8 +24,23 @@ def send(title: str, body: str):
     """Send a desktop notification on the current platform."""
     if sys.platform == "darwin":
         _send_macos(title, body)
+    elif sys.platform == "win32":
+        _send_windows(title, body)
     else:
         _send_linux(title, body)
+
+
+def _send_windows(title: str, body: str):
+    # Route through the Qt system tray balloon. The Windows UI registers its
+    # QSystemTrayIcon via set_tray_icon() at startup, so this picks up the
+    # Aloe Scribe icon and needs no extra dependency.
+    if _tray_icon is not None:
+        try:
+            _tray_icon.showMessage(title, body)
+            return
+        except Exception as e:
+            log.warning(f"tray notification failed: {e}")
+    log.info(f"notification: {title} - {body}")
 
 
 def _send_linux(title: str, body: str):
