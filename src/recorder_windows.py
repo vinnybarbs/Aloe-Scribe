@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 TARGET_RATE = 16000          # Hz, mono — matches the transcriber's expected input
 CHUNK_FRAMES = 1600          # ~100 ms per read at most native rates
+PREVIEW_RING_SEC = 60        # keep this many seconds of recent audio for the live preview
 
 
 def _pyaudio():
@@ -146,6 +147,10 @@ class Recorder:
         self._mic_tmp: Optional[Path] = None
         self._sys_tmp: Optional[Path] = None
         self._running = False
+        # Rolling buffers of recent 16 kHz mono float32 audio, one per source,
+        # for the live preview. Capped to PREVIEW_RING_SEC so memory stays flat.
+        self._buf_lock = threading.Lock()
+        self._rings: dict = {"mic": None, "sys": None}
 
     def _capture_system(self) -> bool:
         v = (self._sys_config or "").strip().lower()
@@ -175,8 +180,9 @@ class Recorder:
             log.warning(f"No default WASAPI loopback device: {e}")
             return None
 
-    def _capture_thread(self, device_info, tmp_path: Path):
-        """Read one device to 16 kHz mono int16 WAV until stop is set."""
+    def _capture_thread(self, device_info, tmp_path: Path, tag: str):
+        """Read one device to 16 kHz mono int16 WAV until stop is set, and feed
+        the same audio into the rolling preview ring for this source (tag)."""
         import numpy as np
 
         pyaudio = _pyaudio()
@@ -212,6 +218,12 @@ class Recorder:
                 if mono16k.size:
                     clipped = np.clip(mono16k, -1.0, 1.0)
                     wav.writeframes((clipped * 32767.0).astype(np.int16).tobytes())
+                    # Feed the preview ring (bounded to PREVIEW_RING_SEC).
+                    cap = PREVIEW_RING_SEC * TARGET_RATE
+                    with self._buf_lock:
+                        prev = self._rings.get(tag)
+                        merged = clipped if prev is None else np.concatenate([prev, clipped])
+                        self._rings[tag] = merged[-cap:]
         except Exception as e:
             log.error(f"Capture thread failed ({tmp_path.name}): {e}")
         finally:
@@ -253,6 +265,8 @@ class Recorder:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._stop_event.clear()
         self._threads = []
+        with self._buf_lock:
+            self._rings = {"mic": None, "sys": None}
 
         # Temp per-device tracks live next to the final file.
         stem = output_path.stem
@@ -262,14 +276,18 @@ class Recorder:
         if mic_info is not None:
             log.info(f"Mic capture: {mic_info.get('name')}")
             t = threading.Thread(
-                target=self._capture_thread, args=(mic_info, self._mic_tmp), daemon=True
+                target=self._capture_thread,
+                args=(mic_info, self._mic_tmp, "mic"),
+                daemon=True,
             )
             t.start()
             self._threads.append(t)
         if sys_info is not None:
             log.info(f"System loopback capture: {sys_info.get('name')}")
             t = threading.Thread(
-                target=self._capture_thread, args=(sys_info, self._sys_tmp), daemon=True
+                target=self._capture_thread,
+                args=(sys_info, self._sys_tmp, "sys"),
+                daemon=True,
             )
             t.start()
             self._threads.append(t)
@@ -356,6 +374,29 @@ class Recorder:
                     r.close()
                 except Exception:
                     pass
+
+    def snapshot_recent(self, seconds: float):
+        """Return the last `seconds` of mixed mic+system audio as a 16 kHz mono
+        float32 numpy array (values in -1..1), for the live preview. Returns None
+        if nothing has been captured yet."""
+        import numpy as np
+
+        n = int(seconds * TARGET_RATE)
+        with self._buf_lock:
+            parts = [r for r in (self._rings.get("mic"), self._rings.get("sys")) if r is not None]
+            if not parts:
+                return None
+            tails = [p[-n:].astype(np.float32) for p in parts]
+
+        length = max(t.shape[0] for t in tails)
+        if length == 0:
+            return None
+        mixed = np.zeros(length, dtype=np.float32)
+        for t in tails:
+            if t.shape[0] < length:
+                t = np.pad(t, (length - t.shape[0], 0))  # left-pad so the ends align
+            mixed += t
+        return np.clip(mixed, -1.0, 1.0)
 
     def is_recording(self) -> bool:
         return self._running

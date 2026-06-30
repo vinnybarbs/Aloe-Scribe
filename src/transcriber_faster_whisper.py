@@ -61,6 +61,9 @@ class FasterWhisperTranscriber:
         self.compute_type = compute_type
         self._model = None
         self._load_lock = threading.Lock()
+        # Serializes model.transcribe calls so the live-preview pass and the
+        # final pass never run on the model at the same time.
+        self._infer_lock = threading.Lock()
 
     def _resolve_device_and_compute(self):
         """Pick a concrete (device, compute_type) pair. CUDA when available,
@@ -164,14 +167,16 @@ class FasterWhisperTranscriber:
             return None
 
         try:
-            segments, _info = self._model.transcribe(
-                str(audio_path),
-                language=self.language,
-                beam_size=5,
-                vad_filter=True,
-            )
-            # segments is a generator — materialize it so we can build the file.
-            segments = list(segments)
+            with self._infer_lock:
+                segments, _info = self._model.transcribe(
+                    str(audio_path),
+                    language=self.language,
+                    beam_size=5,
+                    vad_filter=True,
+                )
+                # segments is a generator — materialize it under the lock so the
+                # whole decode finishes before another pass can start.
+                segments = list(segments)
         except Exception as e:
             log.error(f"faster-whisper transcription failed: {e}")
             return None
@@ -181,6 +186,30 @@ class FasterWhisperTranscriber:
         output_path.write_text(markdown, encoding="utf-8")
         log.info(f"Transcript saved: {output_path}")
         return output_path
+
+    def transcribe_samples(self, samples) -> str:
+        """Transcribe an in-memory 16 kHz mono float32 array (values in -1..1)
+        and return the plain text. Used for the live preview, which re-transcribes
+        a rolling window of recent audio. Best-effort: returns '' on failure.
+        Greedy decode (beam_size=1) keeps it fast enough to feel live."""
+        if samples is None or len(samples) == 0:
+            return ""
+        if not self._ensure_loaded():
+            return ""
+        try:
+            with self._infer_lock:
+                segments, _info = self._model.transcribe(
+                    samples,
+                    language=self.language,
+                    beam_size=1,
+                    vad_filter=True,
+                )
+                return " ".join(
+                    (getattr(s, "text", "") or "").strip() for s in segments
+                ).strip()
+        except Exception as e:
+            log.debug(f"transcribe_samples: {e}")
+            return ""
 
     def _build_markdown(self, segments, title: str, date: datetime) -> str:
         """Build the transcript file: a machine-readable YAML header, then the

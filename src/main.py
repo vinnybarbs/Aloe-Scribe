@@ -183,7 +183,7 @@ class AloeScribe:
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._transcribe_existing_file,
-            live_preview=(backend == "parakeet"),
+            live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
             current_output_dir=str(self.output_dir),
@@ -312,6 +312,16 @@ class AloeScribe:
         Parakeet-only and isolated — a failure here never affects the recording
         or the clean final transcript written at Stop.
         """
+        # Windows (faster-whisper) has no true streaming API, so it gets a live
+        # preview instead: re-transcribe a rolling window of recent audio. The
+        # final transcript still comes from the full pass at Stop. Handled before
+        # the Parakeet guard; the Mac path below is unchanged.
+        from transcriber_faster_whisper import FasterWhisperTranscriber
+
+        if isinstance(self.transcriber, FasterWhisperTranscriber):
+            self._start_fw_preview()
+            return
+
         if not isinstance(self.transcriber, ParakeetTranscriber):
             return
         self._live_stop = threading.Event()
@@ -383,6 +393,50 @@ class AloeScribe:
             except Exception as e:
                 log.info(f"Streaming step error: {e}")
         log.info("Streaming transcription ended")
+
+    def _start_fw_preview(self):
+        """Live preview for the faster-whisper backend (Windows). Re-transcribes
+        a rolling window of recent audio and pushes it to the preview box. The
+        final transcript still comes from the full pass at Stop, so this is a
+        liveness indicator, not the saved output. Reuses _live_stop / _stream_thread
+        so the existing Stop handling tears it down."""
+        if not hasattr(self.recorder, "snapshot_recent"):
+            return
+        self._live_stop = threading.Event()
+        try:
+            self.tray.live_preview_clear()
+            self.tray.live_preview_status(
+                "STT model is starting and a live sample will show within 30 seconds."
+            )
+        except Exception:
+            pass
+        self._stream_thread = threading.Thread(
+            target=self._fw_preview_loop, args=(self._live_stop,), daemon=True
+        )
+        self._stream_thread.start()
+
+    def _fw_preview_loop(self, stop_event):
+        PREVIEW_EVERY = 8.0   # re-transcribe the recent window about this often
+        WINDOW_SEC = 20.0     # show the last ~20 s of speech
+        # Warm the model so the first sample appears promptly.
+        try:
+            self.transcriber.preload()
+        except Exception:
+            pass
+        log.info("Live preview started (faster-whisper rolling window)")
+        while not stop_event.is_set():
+            if stop_event.wait(PREVIEW_EVERY):
+                break
+            try:
+                samples = self.recorder.snapshot_recent(WINDOW_SEC)
+                if samples is None or len(samples) < 16000:
+                    continue  # < ~1 s captured so far (16 kHz mono)
+                text = self.transcriber.transcribe_samples(samples)
+                if text:
+                    self.tray.live_preview_set(text)
+            except Exception as e:
+                log.info(f"Preview step error: {e}")
+        log.info("Live preview ended")
 
     def _stop_and_transcribe(self):
         """Stop the recorder and finalize the transcript on a background thread."""

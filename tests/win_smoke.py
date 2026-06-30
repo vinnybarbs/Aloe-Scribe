@@ -39,4 +39,16 @@ assert len(words) >= 3, f"too few words transcribed: {body!r}"
 # Header contract the downstream agent depends on.
 assert "source: aloe-scribe-windows" in text, "missing/incorrect source line"
 
-print(f"SMOKE OK: {len(words)} words, header present")
+# Live-preview path: transcribe_samples on an in-memory array (what the rolling
+# preview feeds). Exercises the same code on the real Windows runner.
+import wave
+import numpy as np
+
+with wave.open(str(wav), "rb") as w:
+    pcm = w.readframes(w.getnframes())
+samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+preview = t.transcribe_samples(samples)
+print("preview text:", repr(preview))
+assert len(preview.split()) >= 3, f"preview produced too few words: {preview!r}"
+
+print(f"SMOKE OK: {len(words)} words, header present, preview works")
