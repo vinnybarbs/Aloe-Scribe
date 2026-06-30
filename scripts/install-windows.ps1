@@ -25,7 +25,7 @@ if (-not $py) {
 $ver = (python -c "import sys; print('%d.%d' % sys.version_info[:2])")
 Write-Host "  Python $ver"
 
-Write-Host "[2/4] Creating virtual environment (.venv)..." -ForegroundColor Green
+Write-Host "[2/5] Creating virtual environment (.venv)..." -ForegroundColor Green
 if (-not (Test-Path ".venv")) {
     python -m venv .venv
 }
@@ -33,11 +33,11 @@ $Pip = ".venv\Scripts\pip.exe"
 $Python = ".venv\Scripts\python.exe"
 & $Python -m pip install --upgrade pip --quiet
 
-Write-Host "[3/4] Installing Windows dependencies (faster-whisper, PyQt6, WASAPI)..." -ForegroundColor Green
+Write-Host "[3/5] Installing Windows dependencies (faster-whisper, PyQt6, WASAPI)..." -ForegroundColor Green
 Write-Host "      First run downloads PyTorch-free wheels, a few minutes."
 & $Pip install -r requirements-windows.txt
 
-Write-Host "[4/4] Seeding config\config.toml..." -ForegroundColor Green
+Write-Host "[4/5] Seeding config\config.toml..." -ForegroundColor Green
 $Config = "config\config.toml"
 $Template = "config\config.toml.example"
 if (-not (Test-Path $Config)) {
@@ -48,12 +48,13 @@ if (-not (Test-Path $Config)) {
 }
 
 # Point the config at the Windows backend. Replace the backend line and make
-# sure the faster-whisper keys exist.
+# sure the faster-whisper keys exist. fetch-model (step 5) sets the model path
+# to the local folder it downloads.
 $cfg = Get-Content $Config -Raw
 $cfg = $cfg -replace '(?m)^\s*backend\s*=\s*".*?"', 'backend = "faster_whisper"'
-if ($cfg -notmatch '(?m)^\s*faster_whisper_model\s*=') {
+if ($cfg -notmatch '(?m)^\s*faster_whisper_device\s*=') {
     $cfg = $cfg -replace '(?m)^(backend\s*=\s*"faster_whisper")',
-        "`$1`nfaster_whisper_model = `"Systran/faster-distil-whisper-large-v3`"`nfaster_whisper_device = `"auto`""
+        "`$1`nfaster_whisper_device = `"auto`""
 }
 # Default the transcript output folder to %USERPROFILE%\meetings.
 $MeetingsDir = Join-Path $env:USERPROFILE "meetings"
@@ -62,11 +63,11 @@ $cfg = $cfg -replace '(?m)^\s*local_dir\s*=\s*".*?"', "local_dir = `"$MeetingsEs
 Set-Content -Path $Config -Value $cfg -NoNewline
 New-Item -ItemType Directory -Force -Path $MeetingsDir | Out-Null
 
+Write-Host "[5/5] Fetching the model from GitHub (no Hugging Face, ~1.4 GB)..." -ForegroundColor Green
+& powershell -ExecutionPolicy Bypass -File "scripts\fetch-model-windows.ps1"
+
 Write-Host ""
 Write-Host "Install complete." -ForegroundColor Green
 Write-Host "  Transcripts will save to: $MeetingsDir"
+Write-Host "  The model is local, so transcription works fully offline."
 Write-Host "  Launch the app with:  scripts\run-windows.ps1"
-Write-Host ""
-Write-Host "Note: the faster-whisper model downloads on first transcription." -ForegroundColor Yellow
-Write-Host "If this network blocks that download, tell me and we will switch to a"
-Write-Host "local model folder served from GitHub, the same way the Mac build does."
