@@ -1,0 +1,70 @@
+name: Windows CI
+
+# Builds and smoke-tests the Windows port on real Windows x64 runners. This is
+# how the Windows build is validated without a physical machine. It cannot test
+# live WASAPI capture or the GUI (no sound card / display in CI) — those still
+# need a real machine — but it proves the deps install, faster-whisper
+# transcribes, the win32 import path loads, and the .exe builds.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "requirements-windows.txt"
+      - "aloe-scribe-windows.spec"
+      - "scripts/*windows*"
+      - "tests/**"
+      - ".github/workflows/windows-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Deps + transcription + import
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Windows dependencies
+        run: pip install -r requirements-windows.txt
+      - name: Transcription smoke (faster-whisper on Windows)
+        env:
+          ALOE_TEST_MODEL: tiny.en
+        run: python tests/win_smoke.py
+      - name: Import smoke (win32 platform path)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import sys; sys.path.insert(0,'src'); import main; print('win32 import OK; Recorder from', main.Recorder.__module__)"
+
+  build:
+    name: PyInstaller .exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Windows dependencies + PyInstaller
+        run: |
+          pip install -r requirements-windows.txt
+          pip install pyinstaller==6.11.1
+      - name: Generate icon.ico
+        run: python -c "from PIL import Image; Image.open('assets/icon.png').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+      - name: Build the .exe
+        run: pyinstaller --noconfirm --clean aloe-scribe-windows.spec
+      - name: Verify the .exe was produced
+        shell: pwsh
+        run: |
+          $exe = "dist/Aloe Scribe/Aloe Scribe.exe"
+          if (-not (Test-Path $exe)) { Write-Error "exe not built"; exit 1 }
+          Get-Item $exe | Select-Object Name, Length | Format-List
+      - name: Upload the built app
+        uses: actions/upload-artifact@v4
+        with:
+          name: aloe-scribe-windows
+          path: dist/Aloe Scribe/
+          retention-days: 14

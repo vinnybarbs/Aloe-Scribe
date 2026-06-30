@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.wav
+!tests/sample.wav
 /tmp/
 .DS_Store
 *.log
