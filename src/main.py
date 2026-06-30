@@ -70,8 +70,12 @@ log = logging.getLogger("aloe-scribe")
 # Resolve paths
 # ---------------------------------------------------------------------------
 if getattr(sys, "frozen", False):
-    # Running inside a py2app .app bundle
-    ROOT = Path(sys.executable).parent.parent / "Resources"
+    if hasattr(sys, "_MEIPASS"):
+        # PyInstaller (Windows): bundled data lives under _MEIPASS.
+        ROOT = Path(sys._MEIPASS)
+    else:
+        # py2app .app bundle (macOS).
+        ROOT = Path(sys.executable).parent.parent / "Resources"
 else:
     ROOT = Path(__file__).parent.parent
 
@@ -94,6 +98,36 @@ elif sys.platform == "win32":
 else:
     from ui import AloeScribeApp
     from recorder import Recorder, list_sources
+
+
+# ---------------------------------------------------------------------------
+# Model path resolution (Windows installer ships the model next to the .exe)
+# ---------------------------------------------------------------------------
+def _resolve_local_model(name: str) -> str:
+    """Resolve a faster-whisper model reference to a local folder.
+
+    An absolute/existing path is used as-is. Otherwise the basename is looked up
+    under models/ next to the executable (where the installer drops it), under
+    ROOT, and under the current dir (from-source). Falls back to the name
+    unchanged so a plain model id still works."""
+    if not name:
+        return name
+    p = Path(name).expanduser()
+    if p.is_dir():
+        return str(p)
+    leaf = p.name
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).parent / "models" / leaf)
+    candidates.append(ROOT / "models" / leaf)
+    candidates.append(Path.cwd() / "models" / leaf)
+    for c in candidates:
+        try:
+            if c.is_dir():
+                return str(c)
+        except Exception:
+            continue
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -148,11 +182,12 @@ class AloeScribe:
             from transcriber_faster_whisper import FasterWhisperTranscriber
 
             tcfg = config.get("transcriber", {})
-            model_id = tcfg.get(
-                "faster_whisper_model", FasterWhisperTranscriber.DEFAULT_MODEL
+            model_id = _resolve_local_model(
+                tcfg.get("faster_whisper_model", FasterWhisperTranscriber.DEFAULT_MODEL)
             )
-            # A local model folder (the Windows install fetches weights from
-            # GitHub, not Hugging Face) keeps transcription fully offline.
+            # A local model folder (the Windows install/installer ships the
+            # weights from GitHub, not Hugging Face) keeps transcription fully
+            # offline.
             if Path(model_id).expanduser().is_dir():
                 os.environ.setdefault("HF_HUB_OFFLINE", "1")
                 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")

@@ -71,3 +71,41 @@ jobs:
           name: aloe-scribe-windows
           path: dist/Aloe Scribe/
           retention-days: 14
+
+  installer:
+    name: Installer (AloeScribeSetup.exe)
+    # Heavy (downloads the model, builds, bundles ~1.5 GB), so run on demand only.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Cache the model
+        uses: actions/cache@v4
+        with:
+          path: models/faster-distil-whisper-large-v3
+          key: fw-model-distil-large-v3
+      - name: Create venv + install deps
+        run: |
+          python -m venv .venv
+          .venv\Scripts\pip install -r requirements-windows.txt
+          .venv\Scripts\pip install pyinstaller==6.11.1
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build the installer
+        run: powershell -ExecutionPolicy Bypass -File scripts\build-installer-windows.ps1
+      - name: Verify the installer was produced
+        shell: pwsh
+        run: |
+          $setup = "installer/Output/AloeScribeSetup.exe"
+          if (-not (Test-Path $setup)) { Write-Error "installer not built"; exit 1 }
+          Get-Item $setup | Select-Object Name, Length | Format-List
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AloeScribeSetup
+          path: installer/Output/AloeScribeSetup.exe
+          retention-days: 14

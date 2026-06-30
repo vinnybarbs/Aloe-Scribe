@@ -10,6 +10,8 @@ build/
 dist/
 *.egg-info/
 assets/AppIcon.icns
+assets/icon.ico
+installer/Output/
 bin/aloe-audio-capture
 
 # User settings — created from config.toml.example on install. Untracked so a
