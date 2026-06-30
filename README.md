@@ -1,10 +1,10 @@
 # Aloe Scribe
 
-Local meeting transcription for macOS and Linux. It records your mic plus system audio, transcribes on your Mac in real time with Parakeet TDT (or Whisper), and saves a Markdown transcript. Audio never leaves the machine.
+Local meeting transcription for macOS, Windows, and Linux. It records your mic plus system audio, transcribes on your machine, and saves a Markdown transcript. Audio never leaves the machine.
 
-On macOS, system audio is captured natively with ScreenCaptureKit. No BlackHole or Multi-Output Device setup.
+macOS transcribes with Parakeet TDT and captures system audio natively with ScreenCaptureKit, so there is no BlackHole or Multi-Output Device setup. Windows transcribes with faster-whisper and captures system audio with WASAPI loopback, built into Windows 10 and 11, so it needs no virtual cable. Linux uses whisper.cpp.
 
-> Repo layout, Mac vs iPhone. This `main` branch is the macOS desktop app (`src/`, `scripts/`, `tools/`). The iPhone app (Xcode, SwiftUI) lives only on the `ios` branch (`ios/`). Do all desktop work on `main`. Run `git checkout ios` only for the phone app. `main` never contains `ios/`.
+> Repo layout. This `main` branch is the desktop app for macOS, Windows, and Linux (`src/`, `scripts/`, `tools/`). The platform code is picked at runtime, so the Windows files never load on macOS and the reverse. The iPhone app (Xcode, SwiftUI) lives only on the `ios` branch (`ios/`). Do all desktop work on `main`. Run `git checkout ios` only for the phone app. `main` never contains `ios/`.
 
 ## How it works
 
@@ -119,13 +119,49 @@ systemctl --user stop aloe-scribe
 journalctl --user -u aloe-scribe -f
 ```
 
+## Install, Windows
+
+Windows support is new. The dependency install, the model download, the transcription, and the `.exe` build are all verified on Windows. Live audio capture and the on-screen window are still being confirmed on hardware, so treat this as a preview.
+
+Running from source is the quickest way to test. In PowerShell:
+
+```powershell
+git clone https://github.com/vinnybarbs/Aloe-Scribe.git
+cd Aloe-Scribe
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts\run-windows.ps1
+```
+
+`install-windows.ps1` creates a Python venv, installs the Windows dependencies, downloads the faster-whisper model from this repo's GitHub Release (not Hugging Face), points the app at the local copy, and sets your transcript folder to `%USERPROFILE%\meetings`. `run-windows.ps1` launches the app.
+
+Update later with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\update-windows.ps1
+```
+
+To build a standalone `.exe` instead of running from source:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+```
+
+That produces `dist\Aloe Scribe\Aloe Scribe.exe`.
+
+A few Windows specifics:
+- System audio uses WASAPI loopback, built into Windows 10 and 11, so there is nothing to install for it.
+- faster-whisper uses an NVIDIA GPU when one is present and the CPU otherwise, detected automatically.
+- Windows transcribes when you press Stop. faster-whisper has no real-time mode, so the on-screen preview is a live sample. Every few seconds it re-transcribes the recent audio so you can see the recording is working. The saved transcript is the full pass at Stop.
+- The log is at `%TEMP%\aloe-scribe.log`.
+
 ## Transcription backends
 
-Two backends, switchable in `config.toml` with `[transcriber] backend = "parakeet"` or `"whisper"`.
+Three backends, set in `config.toml` with `[transcriber] backend`. Use `parakeet` on macOS, `faster_whisper` on Windows, or `whisper` for whisper.cpp.
 
 | Backend | Default | Strengths | Tradeoffs |
 |---|---|---|---|
-| Parakeet TDT v3 (`parakeet-mlx`) | macOS default | 15 to 20 times realtime on Apple Silicon, plus cache-aware streaming for the live transcript. Does not hallucinate "Thank you." over silence. Good accuracy on technical English. Model ships from this repo's GitHub Release, no Hugging Face. | English only. Treats music and non-speech as silence, which suits meetings. |
+| Parakeet TDT v3 (`parakeet-mlx`) | macOS default | 15 to 20 times realtime on Apple Silicon, plus cache-aware streaming for the live transcript. Does not hallucinate "Thank you." over silence. Good accuracy on technical English. Model ships from this repo's GitHub Release, no Hugging Face. | English only. Apple Silicon only. Treats music and non-speech as silence, which suits meetings. |
+| faster-whisper (CTranslate2) | Windows default | Cross-platform. CPU or NVIDIA CUDA, detected automatically. Loads from a local folder. Model ships from this repo's GitHub Release, no Hugging Face. | No real-time mode. The live view is a rolling sample, and the saved transcript is the full pass at Stop. |
 | whisper.cpp | Linux default, macOS fallback | Multilingual. Mature. Runs on any CPU. | Hallucinates on silence, reduced with `-mc 0 -sns`. Slower. |
 
 To swap, edit `config.toml` and restart the app:
@@ -161,8 +197,15 @@ mic_source = ""
 system_source = ""
 
 [transcriber]
-backend = "parakeet"   # or "whisper"
+# parakeet (macOS), faster_whisper (Windows), or whisper (whisper.cpp)
+backend = "parakeet"
 parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
+
+# Used when backend = "faster_whisper" (Windows). install-windows.ps1 sets the
+# model to the local folder it downloads, and the device to auto (NVIDIA GPU
+# when present, else CPU).
+faster_whisper_model = "faster-distil-whisper-large-v3"
+faster_whisper_device = "auto"
 
 [whisper]
 # Used when backend = "whisper" (also the macOS fallback).
@@ -240,11 +283,14 @@ aloe-scribe/
 │   ├── main.py                 # entry point and orchestration
 │   ├── ui.py                   # Linux GTK and AppIndicator3 UI
 │   ├── ui_mac.py               # macOS PyQt6 UI
+│   ├── ui_windows.py           # Windows UI (reuses ui_mac, Qt system tray)
 │   ├── native_tray.py          # macOS NSStatusItem (menu-bar leaf icon)
 │   ├── recorder.py             # Linux audio (PulseAudio)
 │   ├── recorder_mac.py         # macOS recorder driver (spawns audio helper)
+│   ├── recorder_windows.py     # Windows audio (WASAPI loopback + mic)
 │   ├── transcriber.py          # whisper.cpp wrapper
 │   ├── transcriber_parakeet.py # parakeet-mlx wrapper (macOS default, streaming)
+│   ├── transcriber_faster_whisper.py # faster-whisper wrapper (Windows default)
 │   ├── audio_meter.py          # mic and system VU bar reader
 │   ├── frontmatter.py          # transcript YAML header
 │   ├── meeting.py              # tiny dataclass for the recording label
@@ -258,20 +304,33 @@ aloe-scribe/
 ├── scripts/
 │   ├── install.sh              # Linux installer
 │   ├── install-mac.sh          # macOS installer (one-shot setup)
+│   ├── install-windows.ps1     # Windows installer (venv, deps, model)
+│   ├── run-windows.ps1         # launch the Windows app from source
 │   ├── update-mac.sh           # pull, rebuild, reinstall, keep settings
+│   ├── update-windows.ps1      # Windows: pull, refresh deps, keep model
 │   ├── build-app.sh            # rebuild the macOS .app after a code change
+│   ├── build-windows.ps1       # build the Windows .exe with PyInstaller
 │   ├── build-helper.sh         # rebuild only the Swift audio helper
 │   ├── create-signing-cert.sh  # one-time stable signing identity
-│   ├── fetch-model.sh          # download the model from the GitHub Release
-│   ├── publish-model.sh        # maintainers: publish the model release
+│   ├── fetch-model.sh          # download the macOS model from the GitHub Release
+│   ├── fetch-model-windows.ps1 # download the Windows model from the GitHub Release
+│   ├── publish-model.sh        # maintainers: publish the macOS model release
+│   ├── publish-model-windows.sh # maintainers: publish the Windows model release
 │   ├── transcribe_wav.py       # recover orphan WAVs after a crash
 │   ├── health-check.sh         # Linux audio and transcription test
 │   └── health-check-mac.sh     # macOS audio and transcription test
+├── tests/
+│   ├── sample.wav              # short clip used by Windows CI
+│   └── win_smoke.py            # Windows transcription smoke test
+├── .github/workflows/
+│   └── windows-ci.yml          # builds and tests the Windows port on Windows runners
 ├── assets/
 │   └── icon.png                # aloe leaf icon
 ├── setup.py                    # py2app config for the macOS .app bundle
+├── aloe-scribe-windows.spec    # PyInstaller config for the Windows .exe
 ├── requirements.txt            # Linux Python dependencies
-└── requirements-mac.txt        # macOS Python dependencies (hash-pinned)
+├── requirements-mac.txt        # macOS Python dependencies (hash-pinned)
+└── requirements-windows.txt    # Windows Python dependencies
 ```
 
 ## Rebuilding after a code change (macOS)
@@ -298,3 +357,5 @@ cat /tmp/aloe-helper.log
 # Linux
 journalctl --user -u aloe-scribe -f
 ```
+
+On Windows the log is at `%TEMP%\aloe-scribe.log`. View it in PowerShell with `Get-Content $env:TEMP\aloe-scribe.log`.
