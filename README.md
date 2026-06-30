@@ -148,6 +148,16 @@ powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
 
 That produces `dist\Aloe Scribe\Aloe Scribe.exe`.
 
+### Windows installer
+
+For a real double-click installer with a wizard, Start menu and desktop shortcuts, and an uninstaller, build `AloeScribeSetup.exe`. It needs [Inno Setup 6](https://jrsoftware.org/isdl.php), or `choco install innosetup`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-installer-windows.ps1
+```
+
+The result is `installer\Output\AloeScribeSetup.exe`. It is a per-user install, so it does not prompt for admin, and it bundles the transcription model, so the installed app works offline with nothing to download. The installer is unsigned for now, so on first launch Windows SmartScreen shows "More info" then "Run anyway". A signed build is a later step if you distribute it widely.
+
 A few Windows specifics:
 - System audio uses WASAPI loopback, built into Windows 10 and 11, so there is nothing to install for it.
 - faster-whisper uses an NVIDIA GPU when one is present and the CPU otherwise, detected automatically.
@@ -310,6 +320,7 @@ aloe-scribe/
 │   ├── update-windows.ps1      # Windows: pull, refresh deps, keep model
 │   ├── build-app.sh            # rebuild the macOS .app after a code change
 │   ├── build-windows.ps1       # build the Windows .exe with PyInstaller
+│   ├── build-installer-windows.ps1 # build AloeScribeSetup.exe (Inno Setup)
 │   ├── build-helper.sh         # rebuild only the Swift audio helper
 │   ├── create-signing-cert.sh  # one-time stable signing identity
 │   ├── fetch-model.sh          # download the macOS model from the GitHub Release
@@ -319,6 +330,8 @@ aloe-scribe/
 │   ├── transcribe_wav.py       # recover orphan WAVs after a crash
 │   ├── health-check.sh         # Linux audio and transcription test
 │   └── health-check-mac.sh     # macOS audio and transcription test
+├── installer/
+│   └── aloe-scribe.iss         # Inno Setup script for AloeScribeSetup.exe
 ├── tests/
 │   ├── sample.wav              # short clip used by Windows CI
 │   └── win_smoke.py            # Windows transcription smoke test
