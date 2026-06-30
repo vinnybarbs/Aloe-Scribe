@@ -1,0 +1,25 @@
+# Windows desktop dependencies for Aloe Scribe.
+#
+# Kept separate from requirements-mac.txt on purpose: the Mac build never reads
+# this file, so nothing here can affect the macOS app. Windows uses faster-whisper
+# (CTranslate2) for transcription because Parakeet/MLX is Apple Silicon only.
+#
+# Versions will be hash-pinned the same way the Mac file is, via:
+#   uv pip compile requirements-windows.in --generate-hashes
+# Listed here unpinned during the initial port; pin before distributing.
+
+# UI (PyQt6 is cross-platform; the Windows UI reuses it with a Qt system tray)
+PyQt6==6.11.0
+pillow==12.2.0
+tomli==2.4.1; python_version < "3.11"
+
+# Transcription: faster-whisper (CPU or NVIDIA CUDA). ctranslate2 is pulled in
+# transitively and is what actually picks CUDA vs CPU at load time.
+faster-whisper==1.2.1
+
+# System + mic audio capture via WASAPI loopback (built into Windows 10/11,
+# no virtual audio cable needed).
+PyAudioWPatch==0.2.12.7
+
+# Packaging to a standalone .exe
+pyinstaller==6.11.1
