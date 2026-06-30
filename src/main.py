@@ -48,7 +48,11 @@ except ModuleNotFoundError:
 # ---------------------------------------------------------------------------
 # Logging — write to /tmp/aloe-scribe.log so we can debug bundled app
 # ---------------------------------------------------------------------------
-LOG_FILE = Path("/tmp/aloe-scribe.log")
+if sys.platform == "win32":
+    # /tmp does not exist on Windows; use the per-user temp dir.
+    LOG_FILE = Path(os.environ.get("TEMP", os.environ.get("TMP", "."))) / "aloe-scribe.log"
+else:
+    LOG_FILE = Path("/tmp/aloe-scribe.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
