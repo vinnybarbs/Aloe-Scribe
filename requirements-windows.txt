@@ -17,6 +17,9 @@ tomli==2.4.1; python_version < "3.11"
 # transitively and is what actually picks CUDA vs CPU at load time.
 faster-whisper==1.2.1
 
+# Audio resampling/mixing in the recorder (also a faster-whisper dependency).
+numpy>=1.26,<3
+
 # System + mic audio capture via WASAPI loopback (built into Windows 10/11,
 # no virtual audio cable needed).
 PyAudioWPatch==0.2.12.7
