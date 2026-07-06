@@ -84,7 +84,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Cache the model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/faster-distil-whisper-large-v3
           key: fw-model-distil-large-v3
