@@ -75,12 +75,15 @@ That splits `model.safetensors` into parts under 2 GiB (the GitHub asset limit),
 
 ## Updating to the latest version (macOS)
 
+The install one-liner is also the updater. Run it from any Terminal window, no need to cd anywhere:
+
 ```bash
-cd ~/aloe-scribe
-bash scripts/update-mac.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/vinnybarbs/Aloe-Scribe/main/scripts/get-mac.sh)"
 ```
 
-That pulls the newest code, keeps your settings (calendar URL, mic, output folder live inside the installed app bundle), creates the stable signing identity if it is missing, and rebuilds and reinstalls the app. A relaunch alone is not enough. The app code is frozen into the bundle, so an update has to rebuild it.
+When it finds an existing install it updates instead of reinstalling: it pulls the newest code, keeps your settings (calendar URL, mic, output folder live inside the installed app bundle), syncs any new Python dependencies, creates the stable signing identity if it is missing, and rebuilds and reinstalls the app. A relaunch alone is not enough. The app code is frozen into the bundle, so an update has to rebuild it.
+
+From inside the repo, `bash scripts/update-mac.sh` does the same update directly.
 
 > First update only. If you installed before settings were untracked, your local `config/config.toml` may still be tracked by git and block the pull. Stash it once. Your live settings are safe inside the installed app and get restored automatically. After that it is just `update-mac.sh`:
 > ```bash

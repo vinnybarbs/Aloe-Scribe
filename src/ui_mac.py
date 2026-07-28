@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QProgressBar,
     QFileDialog,
+    QMessageBox,
     QTextEdit,
 )
 
@@ -188,6 +189,7 @@ class _Signals(QObject):
     live_preview_set = pyqtSignal(str)
     live_preview_clear = pyqtSignal()
     live_preview_status = pyqtSignal(str)
+    show_error = pyqtSignal(str)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +247,7 @@ class AloeScribeWindow(QMainWindow):
         self._signals.live_preview_set.connect(self._on_live_preview_set)
         self._signals.live_preview_clear.connect(self._on_live_preview_clear)
         self._signals.live_preview_status.connect(self._on_live_preview_status)
+        self._signals.show_error.connect(self._on_show_error)
 
         # Timer
         self._timer = QTimer(self)
@@ -487,11 +490,11 @@ class AloeScribeWindow(QMainWindow):
         # Output folder picker
         self._build_output_folder_row()
 
-        # Recovery dropdown: pick an un-transcribed recording and run it.
-        # Only appears when such WAVs exist; grow the window to fit it.
-        has_recordings = self._build_transcribe_file_row()
+        # "Transcribe a file…" button: opens a picker so any audio file can
+        # be transcribed (recovery of failed recordings, or external files).
+        has_transcribe = self._build_transcribe_file_row()
         base = 586 if self._system_on() else 536  # includes the law fine-print line  # +50 for the system-audio meter
-        self.setFixedSize(344, base + (90 if has_recordings else 0))
+        self.setFixedSize(344, base + (56 if has_transcribe else 0))
 
         btn = QPushButton("Start recording")
         btn.setObjectName("btnStart")
@@ -684,26 +687,10 @@ class AloeScribeWindow(QMainWindow):
         self._render_idle()
 
     def _build_transcribe_file_row(self) -> bool:
-        """Show a dropdown of un-transcribed recordings + a Transcribe button.
-
-        Lists only .wav files in the output folder that don't yet have a .md
-        sibling — i.e. recordings whose transcription failed or was
-        interrupted. Returns True if the row was added (recordings exist)."""
+        """Show a 'Transcribe a file' button that opens a native file picker,
+        so ANY audio file can be transcribed — not just orphans the app finds
+        in the output folder. Returns True if the row was added."""
         if not self._on_transcribe_file:
-            return False
-        out_dir = (
-            Path(self._output_dir).expanduser()
-            if self._output_dir
-            else Path("~/meetings").expanduser()
-        )
-        try:
-            wavs = sorted(
-                w for w in out_dir.glob("*.wav") if not w.with_suffix(".md").exists()
-            )
-        except Exception:
-            wavs = []
-        if not wavs:
-            self._wav_combo = None
             return False
 
         sep = QFrame()
@@ -711,39 +698,35 @@ class AloeScribeWindow(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         self._content_layout.addWidget(sep)
 
-        label = QLabel("Transcribe a recording")
-        label.setObjectName("deviceLabel")
-        self._content_layout.addWidget(label)
-
-        row = QHBoxLayout()
-        self._wav_combo = QComboBox()
-        for w in wavs:
-            self._wav_combo.addItem(w.name, str(w))
-        row.addWidget(self._wav_combo, 1)
-
-        go = QPushButton("Transcribe")
+        go = QPushButton("Transcribe a file…")
         go.setObjectName("btnSkip")
-        go.setMinimumWidth(96)
         go.clicked.connect(self._on_transcribe_clicked)
-        row.addWidget(go, 0)
-
-        self._content_layout.addLayout(row)
+        self._content_layout.addWidget(go)
         return True
 
     def _on_transcribe_clicked(self):
-        combo = getattr(self, "_wav_combo", None)
-        if combo is None:
+        if not self._on_transcribe_file:
             return
-        wav = combo.currentData()
-        if not wav or not self._on_transcribe_file:
+        out_dir = (
+            Path(self._output_dir).expanduser()
+            if self._output_dir
+            else Path("~/meetings").expanduser()
+        )
+        path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Choose a recording to transcribe",
+            str(out_dir),
+            "Audio files (*.wav *.m4a *.mp3 *.aiff *.flac *.ogg);;All files (*)",
+        )
+        if not path:
             return
-        log.info(f"UI: transcribe existing recording: {wav}")
+        log.info(f"UI: transcribe existing recording: {path}")
         # Show the processing screen, then run transcription off the UI thread.
         self._signals.set_processing.emit()
         import threading
 
         threading.Thread(
-            target=lambda: self._on_transcribe_file(wav), daemon=True
+            target=lambda: self._on_transcribe_file(path), daemon=True
         ).start()
 
     def _render_recording(self, meeting):
@@ -947,6 +930,15 @@ class AloeScribeWindow(QMainWindow):
 
     def live_preview_status(self, msg):
         self._signals.live_preview_status.emit(msg)
+
+    def show_error(self, msg):
+        self._signals.show_error.emit(msg)
+
+    def _on_show_error(self, msg: str):
+        # Back to idle first, then surface the failure visibly — errors used
+        # to go only to the log file, which read as a frozen Transcribe button.
+        self._render_idle()
+        QMessageBox.warning(self, "Aloe Scribe", msg)
 
     # ------------------------------------------------------------------ #
     # Handlers                                                             #
@@ -1244,3 +1236,7 @@ class AloeScribeApp:
     def live_preview_status(self, msg):
         if self._window:
             self._window.live_preview_status(msg)
+
+    def show_error(self, msg):
+        if self._window:
+            self._window.show_error(msg)

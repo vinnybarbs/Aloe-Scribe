@@ -94,6 +94,15 @@ else
 fi
 
 # -----------------------------------------------------------
-# 5. Full install
+# 5. Install, or update if already installed
 # -----------------------------------------------------------
-bash scripts/install-mac.sh
+# The same one-liner serves both cases, so nobody has to remember a separate
+# update command or cd anywhere. An existing install goes through
+# update-mac.sh, which preserves the user's settings (mic, calendar URL,
+# output folder); install-mac.sh would reset them.
+if [ -d "/Applications/Aloe Scribe.app" ]; then
+    echo "${GREEN}Existing install detected — updating (your settings are kept)...${NC}"
+    bash scripts/update-mac.sh
+else
+    bash scripts/install-mac.sh
+fi

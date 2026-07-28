@@ -623,89 +623,22 @@ class AloeScribe:
             self._stream_thread.join(timeout=4)
             self._stream_thread = None
         wav_path = self.recorder.stop()
+        # The stream is preview + crash-checkpoint only. Its sentence
+        # timestamps are window-relative (parakeet-mlx's streaming decoder
+        # never applies a chunk offset, unlike batch), so transcripts built
+        # from it showed [00:00]-ish times for hour-long meetings — and the
+        # speaker labeler windows audio by timestamp, so it needs real ones.
+        # The final transcript therefore ALWAYS comes from a batch pass.
+        try:
+            self.transcriber.stream_close()
+        except Exception:
+            pass
         if not wav_path:
-            try:
-                self.transcriber.stream_close()
-            except Exception:
-                pass
             self.tray.set_idle()
             return
-
-        # Parakeet: the stream already holds the transcript, so finalize from it
-        # (fast). Whisper: there is no stream, so transcribe the file.
-        target = (
-            self._finalize_transcript
-            if isinstance(self.transcriber, ParakeetTranscriber)
-            else self._transcribe_and_sync
-        )
-        threading.Thread(target=target, args=(wav_path,), daemon=True).start()
-
-    def _finalize_transcript(self, wav_path: Path):
-        """Save the streamed transcript. Feed the last bit of audio the live loop
-        did not reach, then build the final .md from the stream result — with
-        M*/R* speaker labels when the recording was split. No full
-        re-transcribe. Falls back to a batch transcribe only if the stream
-        produced nothing."""
-        meeting = self._current_meeting
-        title = meeting.title if meeting else "Recording"
-        when = getattr(self, "_recording_start", None) or datetime.now()
-        md_path = getattr(self, "_md_path", None) or (
-            self.output_dir / f"{wav_path.stem}.md"
-        )
-
-        streamed_text = ""
-        md = ""
-        sentences = []
-        try:
-            offset = getattr(self, "_stream_offset", 44)
-            channels = getattr(self, "_stream_wav_channels", 0) or _wav_header_channels(
-                wav_path
-            )
-            frame_bytes = 2 * channels
-            if wav_path.exists():
-                with open(wav_path, "rb") as f:
-                    f.seek(offset)
-                    raw = f.read()
-                consumed = len(raw) - (len(raw) % frame_bytes)
-                if consumed > 0:
-                    self.transcriber.stream_feed(
-                        _pcm_to_mono_float(raw[:consumed], channels)
-                    )
-            streamed_text = self.transcriber.stream_text()
-            md = self.transcriber.stream_markdown(title, when)
-            sentences = self.transcriber.stream_sentences()
-        except Exception as e:
-            log.error(f"Stream finalize error: {e}")
-        finally:
-            try:
-                self.transcriber.stream_close()
-            except Exception:
-                pass
-
-        # Speaker attribution: swap in the labeled markdown when the recording
-        # has split channels and labeling works. Any failure keeps the plain
-        # streamed transcript — never lose text to a labeling problem.
-        labeled_md = self._build_labeled_markdown(wav_path, sentences, title, when)
-        if labeled_md:
-            md = labeled_md
-
-        if streamed_text and md:
-            try:
-                md_path.parent.mkdir(parents=True, exist_ok=True)
-                md_path.write_text(md, encoding="utf-8")
-                try:
-                    wav_path.unlink()
-                except Exception:
-                    pass
-                self.tray.set_done(md_path)
-                self.syncer.enqueue(md_path)
-                self._current_meeting = None
-                return
-            except Exception as e:
-                log.error(f"Writing streamed transcript failed: {e}")
-
-        log.info("Stream produced no transcript. Falling back to a full transcribe.")
-        self._transcribe_and_sync(wav_path)
+        threading.Thread(
+            target=self._transcribe_and_sync, args=(wav_path,), daemon=True
+        ).start()
 
     def _build_labeled_markdown(
         self, wav_path: Path, sentences: list, title: str, when: datetime
@@ -833,23 +766,47 @@ class AloeScribe:
         self._current_meeting = None
 
     # ------------------------------------------------------------------ #
-    # Transcribe an existing WAV chosen from the UI dropdown               #
+    # Transcribe an existing audio file chosen in the UI file picker       #
     # ------------------------------------------------------------------ #
 
+    def _show_error(self, msg: str):
+        """Surface an error in the UI when the platform tray supports it
+        (Linux GTK does not); the log always gets it either way."""
+        try:
+            if hasattr(self.tray, "show_error"):
+                self.tray.show_error(msg)
+        except Exception:
+            pass
+
     def _transcribe_existing_file(self, wav_path):
-        """Transcribe an already-recorded WAV the user picked in the UI.
+        """Transcribe an audio file the user picked in the UI.
 
         Mirrors the live recording path: infers the meeting title/date from the
-        filename, runs the configured backend, and updates the tray. The WAV is
-        kept on success here — the dropdown lists only WAVs without a .md
-        sibling, so a successful run drops it from the list naturally without
-        deleting the audio.
+        filename, runs the configured backend, and updates the tray. The audio
+        file is kept on success — only live recordings delete their WAV.
         """
         wav_path = Path(wav_path).expanduser()
         if not wav_path.exists():
             log.error(f"WAV not found: {wav_path}")
             self.tray.set_idle()
+            self._show_error(f"File not found: {wav_path}")
             return
+
+        # A header-only WAV (~44 bytes) is a recording that captured no audio
+        # (e.g. the app was killed at start). Say so plainly instead of
+        # failing into the log — a silent failure reads as a frozen button.
+        try:
+            if wav_path.stat().st_size < 1024:
+                log.error(f"File contains no audio: {wav_path}")
+                self.tray.set_idle()
+                self._show_error(
+                    f"{wav_path.name} contains no audio — the recording it "
+                    "came from captured nothing, so there is nothing to "
+                    "transcribe. You can delete the file."
+                )
+                return
+        except Exception:
+            pass
 
         title, when = self._infer_meeting_from_filename(wav_path)
         md_path = wav_path.with_suffix(".md")
@@ -895,6 +852,11 @@ class AloeScribe:
         else:
             log.error(f"Could not transcribe {wav_path}")
             self.tray.set_idle()
+            self._show_error(
+                f"Could not transcribe {wav_path.name}. The file may be "
+                "corrupt or in an unsupported format — details are in "
+                "/tmp/aloe-scribe.log."
+            )
 
     @staticmethod
     def _infer_meeting_from_filename(wav_path: Path):

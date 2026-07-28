@@ -217,8 +217,14 @@ class Diarizer:
                     ),
                 ),
                 embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(emb)),
+                # Threshold calibrated on real meeting audio, not the 0.5 the
+                # sherpa examples use: Teams/Zoom codec compression distorts
+                # voice embeddings enough that same-speaker distances inflate.
+                # At 0.5 a 23-min 6-person call fragmented into 32 "speakers";
+                # 1.0 recovered the true count. Higher merges real speakers
+                # (1.25 collapsed everyone into one).
                 clustering=sherpa_onnx.FastClusteringConfig(
-                    num_clusters=-1, threshold=0.5
+                    num_clusters=-1, threshold=1.0
                 ),
                 min_duration_on=0.3,
                 min_duration_off=0.5,
