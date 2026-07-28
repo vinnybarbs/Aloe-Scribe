@@ -26,11 +26,17 @@ python3 scripts/transcribe_wav.py ~/meetings/2026-04-17-1127-busy.wav
 
 ## Install, macOS
 
-New machine. One command sets up the Python env, the dependencies, the Parakeet model (downloaded from GitHub, not Hugging Face), and the app:
+New machine. One command clones the repo, sets up the Python env, the dependencies, the Parakeet model (downloaded from GitHub, not Hugging Face), and builds the app into `/Applications`:
 
 ```bash
-git clone https://github.com/vinnybarbs/Aloe-Scribe.git ~/aloe-scribe
-cd ~/aloe-scribe
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/vinnybarbs/Aloe-Scribe/main/scripts/get-mac.sh)"
+```
+
+Requirements: Apple Silicon Mac on macOS 13 or newer (Intel works with the whisper.cpp fallback, slower). If Xcode Command Line Tools are missing, the installer triggers the install dialog and asks you to re-run afterward. Everything is built locally on your machine, so there are no Gatekeeper "app is damaged" dialogs to fight.
+
+Already have the repo cloned? The same flow works from inside it:
+
+```bash
 bash scripts/install-mac.sh
 ```
 

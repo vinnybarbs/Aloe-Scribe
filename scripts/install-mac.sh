@@ -163,6 +163,12 @@ fi
 # -----------------------------------------------------------
 echo -e "${GREEN}[6/6]${NC} Building Aloe Scribe.app via scripts/build-app.sh..."
 
+# Stable self-signed identity first (idempotent) — without it the build falls
+# back to ad-hoc signing and macOS revokes Screen Recording + Microphone
+# permissions on every rebuild.
+bash "$PROJECT_DIR/scripts/create-signing-cert.sh" || \
+    echo "  ⚠ Signing-cert setup failed — continuing with ad-hoc signing (permissions will re-prompt after updates)."
+
 cd "$PROJECT_DIR"
 
 # Clean previous builds and caches.
