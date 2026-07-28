@@ -20,6 +20,10 @@ faster-whisper==1.2.1
 # Audio resampling/mixing in the recorder (also a faster-whisper dependency).
 numpy>=1.26,<3
 
+# Speaker diarization for transcript speaker labels (optional at runtime —
+# the app degrades to channel-level labels without it).
+sherpa-onnx==1.13.4
+
 # System + mic audio capture via WASAPI loopback (built into Windows 10/11,
 # no virtual audio cable needed).
 PyAudioWPatch==0.2.12.7

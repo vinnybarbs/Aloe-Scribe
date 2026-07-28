@@ -131,6 +131,38 @@ def _resolve_local_model(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# WAV stream helpers (split recordings are stereo: ch0 = mic, ch1 = system)
+# ---------------------------------------------------------------------------
+def _wav_header_channels(path: Path) -> int:
+    """Channel count straight from the RIFF header. Works on a growing file
+    whose data-size field is still zero (the helper patches it at stop)."""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(24)
+        if len(h) >= 24 and h[:4] == b"RIFF":
+            return int.from_bytes(h[22:24], "little") or 1
+    except Exception:
+        pass
+    return 1
+
+
+def _pcm_to_mono_float(raw: bytes, channels: int):
+    """Interleaved int16 PCM → mono float32 in [-1, 1]. Multi-channel input is
+    downmixed with a saturating sum, matching the loudness of the old
+    pre-split mixed recordings."""
+    import numpy as np
+
+    samples = np.frombuffer(raw, dtype=np.int16)
+    if channels > 1:
+        usable = (len(samples) // channels) * channels
+        frames = samples[:usable].reshape(-1, channels)
+        samples = np.clip(
+            frames.astype(np.int32).sum(axis=1), -32768, 32767
+        ).astype(np.int16)
+    return samples.astype(np.float32) / 32768.0
+
+
+# ---------------------------------------------------------------------------
 # Load config
 # ---------------------------------------------------------------------------
 def load_config() -> dict:
@@ -158,10 +190,18 @@ class AloeScribe:
         self.output_dir = Path(config["output"]["local_dir"]).expanduser()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Speaker attribution: record mic/system as separate channels and
+        # label transcript lines (M* = mic side, R* = remote side).
+        self._speaker_labels = bool(
+            config.get("transcriber", {}).get("speaker_labels", True)
+        )
+        self._diarizer = None  # built lazily on first labeled finalize
+
         # Initialise components
         self.recorder = Recorder(
             mic_source=config["audio"].get("mic_source", ""),
             system_source=config["audio"].get("system_source", ""),
+            split_channels=self._speaker_labels,
         )
 
         backend = config.get("transcriber", {}).get("backend", "whisper").lower()
@@ -379,12 +419,11 @@ class AloeScribe:
         self._stream_thread.start()
 
     def _streaming_loop(self, wav_path, md_path, title, start_dt, stop_event):
-        import numpy as np
-
         STEP = 1.5           # feed new audio every ~1.5 s
         MD_EVERY = 30.0      # checkpoint the partial transcript to .md every ~30 s
         elapsed = 0.0
         last_md = 0.0
+        channels = 0         # resolved from the WAV header once data arrives
 
         # The transcriber runs all MLX work (open, feed, close) on its single
         # inference thread, so the stream stays on the thread that loaded the model.
@@ -402,17 +441,19 @@ class AloeScribe:
                     continue
                 if wav_path.stat().st_size - self._stream_offset < 3200:  # < ~0.1 s
                     continue
+                if channels == 0:
+                    channels = _wav_header_channels(wav_path)
+                    self._stream_wav_channels = channels
+                frame_bytes = 2 * channels
                 with open(wav_path, "rb") as f:
                     f.seek(self._stream_offset)
                     raw = f.read()
-                consumed = len(raw) - (len(raw) % 2)
+                consumed = len(raw) - (len(raw) % frame_bytes)
                 if consumed <= 0:
                     continue
                 self._stream_offset += consumed
-                samples = (
-                    np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
-                    / 32768.0
-                )
+                # Split recordings are stereo; the live stream wants the mix.
+                samples = _pcm_to_mono_float(raw[:consumed], channels)
                 text = self.transcriber.stream_feed(samples)
                 if text:
                     self.tray.live_preview_set(text)
@@ -502,11 +543,10 @@ class AloeScribe:
 
     def _finalize_transcript(self, wav_path: Path):
         """Save the streamed transcript. Feed the last bit of audio the live loop
-        did not reach, write the .md from the stream result, and we are done. No
-        full re-transcribe. Falls back to a batch transcribe only if the stream
+        did not reach, then build the final .md from the stream result — with
+        M*/R* speaker labels when the recording was split. No full
+        re-transcribe. Falls back to a batch transcribe only if the stream
         produced nothing."""
-        import numpy as np
-
         meeting = self._current_meeting
         title = meeting.title if meeting else "Recording"
         when = getattr(self, "_recording_start", None) or datetime.now()
@@ -516,21 +556,25 @@ class AloeScribe:
 
         streamed_text = ""
         md = ""
+        sentences = []
         try:
             offset = getattr(self, "_stream_offset", 44)
+            channels = getattr(self, "_stream_wav_channels", 0) or _wav_header_channels(
+                wav_path
+            )
+            frame_bytes = 2 * channels
             if wav_path.exists():
                 with open(wav_path, "rb") as f:
                     f.seek(offset)
                     raw = f.read()
-                consumed = len(raw) - (len(raw) % 2)
+                consumed = len(raw) - (len(raw) % frame_bytes)
                 if consumed > 0:
-                    samples = (
-                        np.frombuffer(raw[:consumed], dtype=np.int16).astype(np.float32)
-                        / 32768.0
+                    self.transcriber.stream_feed(
+                        _pcm_to_mono_float(raw[:consumed], channels)
                     )
-                    self.transcriber.stream_feed(samples)
             streamed_text = self.transcriber.stream_text()
             md = self.transcriber.stream_markdown(title, when)
+            sentences = self.transcriber.stream_sentences()
         except Exception as e:
             log.error(f"Stream finalize error: {e}")
         finally:
@@ -538,6 +582,13 @@ class AloeScribe:
                 self.transcriber.stream_close()
             except Exception:
                 pass
+
+        # Speaker attribution: swap in the labeled markdown when the recording
+        # has split channels and labeling works. Any failure keeps the plain
+        # streamed transcript — never lose text to a labeling problem.
+        labeled_md = self._build_labeled_markdown(wav_path, sentences, title, when)
+        if labeled_md:
+            md = labeled_md
 
         if streamed_text and md:
             try:
@@ -557,6 +608,58 @@ class AloeScribe:
         log.info("Stream produced no transcript. Falling back to a full transcribe.")
         self._transcribe_and_sync(wav_path)
 
+    def _build_labeled_markdown(
+        self, wav_path: Path, sentences: list, title: str, when: datetime
+    ) -> str:
+        """Markdown with M*/R* speaker labels, or '' when labeling is disabled,
+        the WAV is mono (single-source recording), or attribution fails."""
+        if not self._speaker_labels or not sentences:
+            return ""
+        try:
+            import speakers
+
+            if _wav_header_channels(wav_path) != 2:
+                return ""
+            if self._diarizer is None:
+                self._diarizer = speakers.Diarizer()
+            res = speakers.label_sentences(wav_path, sentences, self._diarizer)
+            if not res:
+                return ""
+            labeled, diarized = res
+            from frontmatter import build_frontmatter
+
+            duration = max((s.end for s in labeled), default=0.0)
+            source = (
+                "aloe-scribe-windows" if sys.platform == "win32" else "aloe-scribe-mac"
+            )
+            fm = build_frontmatter(
+                title,
+                when,
+                duration,
+                source=source,
+                extras=speakers.speaker_frontmatter_extras(labeled, diarized),
+            )
+            return fm + "\n\n" + speakers.build_labeled_body(labeled) + "\n"
+        except Exception as e:
+            log.warning(f"Speaker labeling failed — keeping unlabeled transcript: {e}")
+            return ""
+
+    def _mono_stt_input(self, wav_path: Path):
+        """Return (stt_input, tmp_mono). For stereo split recordings stt_input
+        is a hidden temp mono downmix (tmp_mono set — caller deletes it); mono
+        recordings pass through as (wav_path, None)."""
+        if _wav_header_channels(wav_path) != 2:
+            return wav_path, None
+        try:
+            import speakers
+
+            tmp = wav_path.with_name(f".{wav_path.stem}.mono.wav")
+            if speakers.downmix_to_mono_wav(wav_path, tmp):
+                return tmp, tmp
+        except Exception as e:
+            log.warning(f"Downmix failed, feeding stereo WAV to STT: {e}")
+        return wav_path, None
+
     def _transcribe_and_sync(self, wav_path: Path):
         meeting = self._current_meeting
         # Use the path + start time fixed at record start (the live stream may
@@ -567,19 +670,48 @@ class AloeScribe:
             self.output_dir / f"{wav_path.stem}.md"
         )
 
+        # Split recordings are stereo and the STT backends expect mono: downmix
+        # to a hidden sibling file for transcription. The stereo original stays
+        # around for speaker attribution until the transcript is written.
+        title = meeting.title if meeting else "Recording"
+        stt_input, tmp_mono = self._mono_stt_input(wav_path)
+
         # Transcribe. Guard against the backend raising (e.g. a Parakeet Metal
         # error) — an uncaught exception here would kill this daemon thread
         # silently, leaving the WAV orphaned with no transcript and no notice.
         result = None
-        try:
-            result = self.transcriber.transcribe(
-                audio_path=wav_path,
-                output_path=md_path,
-                meeting_title=meeting.title if meeting else "Recording",
-                meeting_date=when,
-            )
-        except Exception as e:
-            log.error(f"Transcription raised: {e}")
+        if (
+            tmp_mono is not None
+            and self._speaker_labels
+            and hasattr(self.transcriber, "transcribe_sentences")
+        ):
+            try:
+                sentences = self.transcriber.transcribe_sentences(stt_input)
+                md = self._build_labeled_markdown(wav_path, sentences, title, when)
+                if md:
+                    md_path.parent.mkdir(parents=True, exist_ok=True)
+                    md_path.write_text(md, encoding="utf-8")
+                    result = md_path
+                    log.info(f"Transcript saved (speaker-labeled): {md_path}")
+            except Exception as e:
+                log.warning(f"Labeled transcription failed, retrying plain: {e}")
+
+        if result is None:
+            try:
+                result = self.transcriber.transcribe(
+                    audio_path=stt_input,
+                    output_path=md_path,
+                    meeting_title=title,
+                    meeting_date=when,
+                )
+            except Exception as e:
+                log.error(f"Transcription raised: {e}")
+
+        if tmp_mono is not None:
+            try:
+                tmp_mono.unlink()
+            except Exception:
+                pass
 
         if result:
             # Only delete the WAV once we actually have the transcript.
@@ -624,16 +756,39 @@ class AloeScribe:
         md_path = wav_path.with_suffix(".md")
         log.info(f"Transcribing existing file: {wav_path.name} → {md_path.name}")
 
+        stt_input, tmp_mono = self._mono_stt_input(wav_path)
         result = None
-        try:
-            result = self.transcriber.transcribe(
-                audio_path=wav_path,
-                output_path=md_path,
-                meeting_title=title,
-                meeting_date=when,
-            )
-        except Exception as e:
-            log.error(f"Transcription raised: {e}")
+        if (
+            tmp_mono is not None
+            and self._speaker_labels
+            and hasattr(self.transcriber, "transcribe_sentences")
+        ):
+            try:
+                sentences = self.transcriber.transcribe_sentences(stt_input)
+                md = self._build_labeled_markdown(wav_path, sentences, title, when)
+                if md:
+                    md_path.write_text(md, encoding="utf-8")
+                    result = md_path
+                    log.info(f"Transcript saved (speaker-labeled): {md_path}")
+            except Exception as e:
+                log.warning(f"Labeled transcription failed, retrying plain: {e}")
+
+        if result is None:
+            try:
+                result = self.transcriber.transcribe(
+                    audio_path=stt_input,
+                    output_path=md_path,
+                    meeting_title=title,
+                    meeting_date=when,
+                )
+            except Exception as e:
+                log.error(f"Transcription raised: {e}")
+
+        if tmp_mono is not None:
+            try:
+                tmp_mono.unlink()
+            except Exception:
+                pass
 
         if result:
             self.tray.set_done(md_path)

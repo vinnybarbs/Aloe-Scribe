@@ -211,6 +211,10 @@ system_source = ""
 backend = "parakeet"
 parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 
+# Label transcript lines by speaker (see Speaker labels). false = old
+# unlabeled mixed-mono behavior.
+speaker_labels = true
+
 # Used when backend = "faster_whisper" (Windows). install-windows.ps1 sets the
 # model to the local folder it downloads, and the device to auto (NVIDIA GPU
 # when present, else CPU).
@@ -275,13 +279,29 @@ date: 2026-04-07T14:00:00-06:00
 end: 2026-04-07T14:32:00-06:00
 duration_min: 32
 source: aloe-scribe-mac
+speakers: [M1, R1, R2]
+speaker_key: "M* = voices on the local microphone ..."
 ---
 
-[00:00] Hey, so today we need to discuss the timeline.
-[00:14] Right, and the deadline for the API is next Friday.
+[00:00] M1: Hey, so today we need to discuss the timeline.
+[00:14] R1: Right, and the deadline for the API is next Friday.
+[00:21] R2: I can have the draft ready by Wednesday.
 ```
 
-The header carries the meeting as a time window, so the agent can match the calendar event and infer attendees from there. Desktop and iOS write the same header fields.
+The header carries the meeting as a time window, so the agent can match the calendar event and infer attendees from there. Desktop and iOS write the same header fields. The speaker fields appear only on desktop recordings that captured both mic and system audio (see Speaker labels below).
+
+## Speaker labels
+
+When both the mic and system audio are being captured, the recorder keeps them as separate channels instead of mixing them (macOS: stereo WAV from the Swift helper. Windows: stereo merge of the two WASAPI tracks). That split gives every transcript line a speaker label with no guesswork about which side of the call it came from:
+
+- `M1, M2, ...` are voices heard on the local microphone. This is the in-room side. It is often the machine's owner, but not always, so nothing is ever labeled with a name. A laptop recording a conference room will produce several M speakers.
+- `R1, R2, ...` are voices heard on system audio, meaning the remote participants.
+
+Telling voices apart within a side uses offline speaker diarization (sherpa-onnx, pyannote segmentation plus CAM++ embeddings, about 36 MB of models downloaded once to `~/.cache/aloe-scribe/diarization/`). If sherpa-onnx or its models are unavailable, the transcript still gets channel-level labels: everything on the mic is `M1`, everything remote is `R1`, and the header says so in `speaker_note`.
+
+The labels are deliberately anonymous. The downstream summary agent maps them to names using the matched calendar event and conversational context ("thanks, Priya" said by M1 right after R2 finishes is a strong hint). The `speaker_key` header field explains the scheme to the agent so it does not have to guess.
+
+Set `speaker_labels = false` under `[transcriber]` in config.toml to restore the old behavior (mixed mono recording, no labels). Recordings with a single source (mic-only or system-only) stay mono and unlabeled either way.
 
 ## Project structure
 

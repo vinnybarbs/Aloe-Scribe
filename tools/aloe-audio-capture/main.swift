@@ -4,8 +4,11 @@
 // Device required). Mic audio is captured via AVAudioEngine, with the device
 // chosen by name (the same name avfoundation/CoreAudio exposes).
 //
-// Both streams are downsampled to 16 kHz mono Int16, mixed sample-aligned
-// inside this binary, and written to a single WAV file.
+// Both streams are downsampled to 16 kHz mono Int16 and sample-aligned inside
+// this binary. Default output is a single mixed mono WAV; with --split (and
+// both sources active) the output is instead a stereo WAV with the mic on
+// channel 0 and system audio on channel 1, so downstream speaker attribution
+// can tell the local side from the remote side.
 //
 // Usage:
 //   aloe-audio-capture --output recording.wav \
@@ -49,6 +52,7 @@ struct Args {
     let sampleRate: Double
     let channels: AVAudioChannelCount
     let meterMode: Bool              // --meter: stream SCK PCM to stdout, no WAV
+    let splitChannels: Bool          // --split: stereo WAV, ch0 = mic, ch1 = system
 }
 
 func parseArgs() -> Args {
@@ -58,6 +62,7 @@ func parseArgs() -> Args {
     var sampleRate: Double = 16_000
     var channels: AVAudioChannelCount = 1
     var meterMode = false
+    var splitChannels = false
 
     let argv = CommandLine.arguments
     var i = 1
@@ -74,6 +79,8 @@ func parseArgs() -> Args {
             micDeviceName = argv[i]
         case "--no-system":
             captureSystem = false
+        case "--split":
+            splitChannels = true
         case "--meter":
             meterMode = true
         case "--sample-rate", "-r":
@@ -91,10 +98,14 @@ func parseArgs() -> Args {
         case "--help", "-h":
             print("""
             Usage: aloe-audio-capture --output <path> [--mic <name>] [--no-system]
-                                      [--sample-rate 16000] [--channels 1]
+                                      [--split] [--sample-rate 16000] [--channels 1]
                    aloe-audio-capture --meter [--sample-rate 16000]
 
             Record mode (default): mix system audio (SCK) + optional mic into a WAV.
+            Split mode (--split):   requires both sources; writes a stereo WAV with
+                                    the mic on channel 0 and system audio on
+                                    channel 1 (sample-aligned, not mixed) so
+                                    downstream tools can attribute speakers.
             Meter mode (--meter):   stream raw s16le mono PCM of system audio to
                                     stdout for a live UI level bar.
 
@@ -114,7 +125,8 @@ func parseArgs() -> Args {
                     captureSystem: true,
                     sampleRate: sampleRate,
                     channels: 1,
-                    meterMode: true)
+                    meterMode: true,
+                    splitChannels: false)
     }
     guard let output = output else {
         eprint("Error: --output is required (or pass --meter for level-only mode)")
@@ -124,12 +136,17 @@ func parseArgs() -> Args {
         eprint("Error: must capture at least one source (use --mic or drop --no-system)")
         exit(2)
     }
+    if splitChannels && (!captureSystem || micDeviceName == nil) {
+        eprint("--split needs both mic and system audio; falling back to single-source mono")
+        splitChannels = false
+    }
     return Args(output: output,
                 micDeviceName: micDeviceName,
                 captureSystem: captureSystem,
                 sampleRate: sampleRate,
                 channels: channels,
-                meterMode: false)
+                meterMode: false,
+                splitChannels: splitChannels)
 }
 
 // MARK: - WAV writer
@@ -204,6 +221,7 @@ final class Mixer: @unchecked Sendable {
     private let wavWriter: WavWriter
     private let expectsSystem: Bool
     private let expectsMic: Bool
+    private let split: Bool          // stereo out: ch0 = mic, ch1 = system
 
     // Both buffers carry Int16 samples at outputFormat.sampleRate, mono.
     private var systemFrames: [Int16] = []
@@ -220,7 +238,10 @@ final class Mixer: @unchecked Sendable {
          sampleRate: Double,
          channels: AVAudioChannelCount,
          expectsSystem: Bool,
-         expectsMic: Bool) throws {
+         expectsMic: Bool,
+         split: Bool = false) throws {
+        // Sources always feed mono streams; `split` only changes how they are
+        // written (interleaved stereo instead of summed mono).
         guard let fmt = AVAudioFormat(commonFormat: .pcmFormatInt16,
                                        sampleRate: sampleRate,
                                        channels: channels,
@@ -231,11 +252,12 @@ final class Mixer: @unchecked Sendable {
         self.outputFormat = fmt
         self.expectsSystem = expectsSystem
         self.expectsMic = expectsMic
+        self.split = split && expectsSystem && expectsMic
 
         let url = URL(fileURLWithPath: outputPath)
         self.wavWriter = try WavWriter(url: url,
                                        sampleRate: sampleRate,
-                                       channels: channels)
+                                       channels: self.split ? 2 : channels)
     }
 
     var format: AVAudioFormat { outputFormat }
@@ -270,15 +292,23 @@ final class Mixer: @unchecked Sendable {
         }
         if n == 0 { return }
 
-        var mixed = [Int16](repeating: 0, count: n)
-        if expectsSystem && expectsMic {
+        var mixed: [Int16]
+        if split {
+            // Interleave: frame i = [mic, system].
+            mixed = [Int16](repeating: 0, count: n * 2)
+            for i in 0..<n {
+                mixed[i * 2] = micFrames[i]
+                mixed[i * 2 + 1] = systemFrames[i]
+            }
+        } else if expectsSystem && expectsMic {
+            mixed = [Int16](repeating: 0, count: n)
             for i in 0..<n {
                 mixed[i] = saturateMix(systemFrames[i], micFrames[i])
             }
         } else if expectsSystem {
-            for i in 0..<n { mixed[i] = systemFrames[i] }
+            mixed = Array(systemFrames[0..<n])
         } else {
-            for i in 0..<n { mixed[i] = micFrames[i] }
+            mixed = Array(micFrames[0..<n])
         }
 
         // Drop the consumed prefixes.
@@ -289,9 +319,10 @@ final class Mixer: @unchecked Sendable {
     }
 
     private func writeFrames(_ samples: [Int16]) {
+        let frames = samples.count / (split ? 2 : 1)
         // Diagnostic: report peak amplitude per write (kept once per ~1 sec).
         let priorSec = framesWritten / 16000
-        let nextSec = (framesWritten + samples.count) / 16000
+        let nextSec = (framesWritten + frames) / 16000
         if framesWritten == 0 || priorSec != nextSec {
             var peak: Int32 = 0
             for s in samples {
@@ -302,7 +333,7 @@ final class Mixer: @unchecked Sendable {
         }
         do {
             try wavWriter.write(samples)
-            framesWritten += samples.count
+            framesWritten += frames
         } catch {
             eprint("Mixer write error: \(error.localizedDescription)")
         }
@@ -334,13 +365,20 @@ final class Mixer: @unchecked Sendable {
                 n = micFrames.count
             }
             if n > 0 {
-                var mixed = [Int16](repeating: 0, count: n)
-                if expectsSystem && expectsMic {
+                var mixed: [Int16]
+                if split {
+                    mixed = [Int16](repeating: 0, count: n * 2)
+                    for i in 0..<n {
+                        mixed[i * 2] = micFrames[i]
+                        mixed[i * 2 + 1] = systemFrames[i]
+                    }
+                } else if expectsSystem && expectsMic {
+                    mixed = [Int16](repeating: 0, count: n)
                     for i in 0..<n { mixed[i] = saturateMix(systemFrames[i], micFrames[i]) }
                 } else if expectsSystem {
-                    for i in 0..<n { mixed[i] = systemFrames[i] }
+                    mixed = Array(systemFrames[0..<n])
                 } else {
-                    for i in 0..<n { mixed[i] = micFrames[i] }
+                    mixed = Array(micFrames[0..<n])
                 }
                 systemFrames.removeAll()
                 micFrames.removeAll()
@@ -658,7 +696,8 @@ if args.meterMode {
                           sampleRate: args.sampleRate,
                           channels: args.channels,
                           expectsSystem: args.captureSystem,
-                          expectsMic: args.micDeviceName != nil)
+                          expectsMic: args.micDeviceName != nil,
+                          split: args.splitChannels)
         mixer = m
         systemCapture = args.captureSystem
             ? SystemCapture(targetFormat: targetFormat, sink: m.feedSystem)

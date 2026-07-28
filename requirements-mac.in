@@ -7,3 +7,6 @@ pillow==12.2.0
 tomli==2.4.1
 py2app==0.28.10
 parakeet-mlx==0.5.1
+# Speaker diarization for transcript speaker labels (optional at runtime —
+# the app degrades to channel-level labels without it).
+sherpa-onnx==1.13.4

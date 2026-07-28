@@ -21,10 +21,15 @@ def build_frontmatter(
     start: datetime,
     duration_seconds: float,
     source: str = "aloe-scribe",
+    extras: list = None,
 ) -> str:
     """Return a YAML frontmatter block (including the `---` fences, no trailing
     newline). `start` may be naive (assumed local) or tz-aware; both are
-    emitted as ISO-8601 with an explicit offset."""
+    emitted as ISO-8601 with an explicit offset.
+
+    `extras`: optional pre-formatted YAML lines appended before the closing
+    fence (used for the speaker-label key when the recording was split).
+    The iOS writer does not emit these, which is fine — they are additive."""
     start_local = start.astimezone()
     end_local = (start + timedelta(seconds=max(0.0, duration_seconds))).astimezone()
     duration_min = max(0, round(duration_seconds / 60))
@@ -32,14 +37,14 @@ def build_frontmatter(
     # Quote the title so colons / special chars stay valid YAML.
     safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
 
-    return "\n".join(
-        [
-            "---",
-            f'title: "{safe_title}"',
-            f"date: {start_local.isoformat(timespec='seconds')}",
-            f"end: {end_local.isoformat(timespec='seconds')}",
-            f"duration_min: {duration_min}",
-            f"source: {source}",
-            "---",
-        ]
-    )
+    lines = [
+        "---",
+        f'title: "{safe_title}"',
+        f"date: {start_local.isoformat(timespec='seconds')}",
+        f"end: {end_local.isoformat(timespec='seconds')}",
+        f"duration_min: {duration_min}",
+        f"source: {source}",
+    ]
+    lines.extend(extras or [])
+    lines.append("---")
+    return "\n".join(lines)

@@ -26,6 +26,9 @@ OPTIONS = {
         "recorder",
         "transcriber",
         "transcriber_parakeet",
+        # Imported lazily inside functions (speaker labeling), so py2app's
+        # static graph never sees it — force it in like tty below.
+        "speakers",
         "syncer",
         "notifications",
         "ui_mac",
@@ -58,6 +61,9 @@ OPTIONS = {
     "excludes": [
         "parakeet_mlx",
         "mlx",
+        # Native onnx runtime — same runtime-from-venv treatment as mlx.
+        # speakers.py imports it lazily and degrades gracefully without it.
+        "sherpa_onnx",
         "huggingface_hub",
         "transformers",
         "torch",

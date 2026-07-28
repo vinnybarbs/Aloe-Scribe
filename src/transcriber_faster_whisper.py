@@ -187,6 +187,35 @@ class FasterWhisperTranscriber:
         log.info(f"Transcript saved: {output_path}")
         return output_path
 
+    def transcribe_sentences(self, audio_path: Path) -> Optional[list]:
+        """Batch-transcribe to timestamped segments as
+        [{'start': s, 'end': s, 'text': str}, ...] — the shape the speaker
+        labeler consumes. The audio should be mono (callers with a split WAV
+        downmix first). None on failure."""
+        if not audio_path.exists() or not self._ensure_loaded():
+            return None
+        try:
+            with self._infer_lock:
+                segments, _info = self._model.transcribe(
+                    str(audio_path),
+                    language=self.language,
+                    beam_size=5,
+                    vad_filter=True,
+                )
+                segments = list(segments)
+        except Exception as e:
+            log.error(f"faster-whisper transcription failed: {e}")
+            return None
+        return [
+            {
+                "start": float(getattr(s, "start", 0) or 0),
+                "end": float(getattr(s, "end", 0) or 0),
+                "text": (getattr(s, "text", "") or "").strip(),
+            }
+            for s in segments
+            if (getattr(s, "text", "") or "").strip()
+        ]
+
     def transcribe_samples(self, samples) -> str:
         """Transcribe an in-memory 16 kHz mono float32 array (values in -1..1)
         and return the plain text. Used for the live preview, which re-transcribes

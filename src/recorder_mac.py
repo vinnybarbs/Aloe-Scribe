@@ -3,8 +3,9 @@ recorder_mac.py — macOS audio capture for Aloe Scribe.
 
 Uses the Swift helper binary `aloe-audio-capture` to tap system audio via
 ScreenCaptureKit (no BlackHole / Multi-Output Device setup required) and mix
-in the selected mic via an ffmpeg child process. The helper writes a single
-16 kHz mono WAV ready for whisper.cpp.
+in the selected mic via an ffmpeg child process. With both sources active the
+helper writes a 16 kHz stereo WAV (ch0 = mic, ch1 = system) so speakers can
+be attributed downstream; single-source recordings are mono.
 
 The avfoundation device enumeration is kept here because the macOS UI still
 populates the mic dropdown from it.
@@ -196,11 +197,16 @@ class Recorder:
         else (including the synthetic "system" id) enables SCK capture.
     """
 
-    def __init__(self, mic_source: str = "", system_source: str = ""):
+    def __init__(self, mic_source: str = "", system_source: str = "",
+                 split_channels: bool = True):
         self._mic_config = mic_source
         self._sys_config = system_source
+        self._split_config = split_channels
         self._process: Optional[subprocess.Popen] = None
         self._output_path: Optional[Path] = None
+        # True while a --split recording is running: the WAV is stereo
+        # (ch0 = mic, ch1 = system) rather than mixed mono.
+        self.split_channels = False
 
     def _resolved_mic_name(self) -> str:
         if self._mic_config:
@@ -242,6 +248,12 @@ class Recorder:
             cmd += ["--mic", mic_name]
         if not capture_system:
             cmd += ["--no-system"]
+        # Split needs both sources; single-source recordings stay mono.
+        self.split_channels = bool(
+            self._split_config and mic_name and capture_system
+        )
+        if self.split_channels:
+            cmd += ["--split"]
 
         log.info(f"Starting recorder: {' '.join(cmd)}")
         # Helper stderr goes to a dedicated log file so we can see what SCK +

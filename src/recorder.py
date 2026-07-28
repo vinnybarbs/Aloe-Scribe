@@ -155,9 +155,13 @@ class Recorder:
     Both are mixed into one stereo WAV suitable for Whisper.
     """
 
-    def __init__(self, mic_source: str = "", system_source: str = ""):
+    def __init__(self, mic_source: str = "", system_source: str = "",
+                 split_channels: bool = False):
         self._mic_config = mic_source
         self._sys_config = system_source
+        # Split capture (speaker attribution) is not implemented on Linux;
+        # the flag is accepted so the shared constructor call works.
+        self.split_channels = False
         self._process: Optional[subprocess.Popen] = None
         self._output_path: Optional[Path] = None
 

@@ -138,9 +138,14 @@ class Recorder:
         (including the synthetic "system" id) enables it.
     """
 
-    def __init__(self, mic_source: str = "", system_source: str = ""):
+    def __init__(self, mic_source: str = "", system_source: str = "",
+                 split_channels: bool = True):
         self._mic_config = mic_source
         self._sys_config = system_source
+        self._split_config = split_channels
+        # True while a split recording is running: the final WAV is stereo
+        # (ch0 = mic, ch1 = system) rather than mixed mono.
+        self.split_channels = False
         self._output_path: Optional[Path] = None
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -261,6 +266,11 @@ class Recorder:
             log.error("Refusing to record: no mic and no system audio")
             return False
 
+        # Split needs both sources; single-source recordings stay mono.
+        self.split_channels = bool(
+            self._split_config and mic_info is not None and sys_info is not None
+        )
+
         self._output_path = output_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._stop_event.clear()
@@ -327,12 +337,16 @@ class Recorder:
         return self._output_path
 
     def _mix_tracks(self):
-        """Sum the per-device 16 kHz mono temp tracks into the final WAV.
-        Both tracks share rate/width/channels, so mixing is a chunked int32 sum
-        with clipping — bounded memory regardless of meeting length."""
+        """Merge the per-device 16 kHz mono temp tracks into the final WAV.
+        In split mode (both tracks captured) the output is stereo — ch0 = mic,
+        ch1 = system — so speakers can be attributed downstream. Otherwise the
+        tracks are summed to mono with clipping. Chunked either way, so memory
+        stays bounded regardless of meeting length."""
         import numpy as np
 
-        tracks = [t for t in (self._mic_tmp, self._sys_tmp) if t and t.exists()]
+        mic_t = self._mic_tmp if self._mic_tmp and self._mic_tmp.exists() else None
+        sys_t = self._sys_tmp if self._sys_tmp and self._sys_tmp.exists() else None
+        tracks = [t for t in (mic_t, sys_t) if t]
         if not tracks:
             # Nothing captured — leave a valid empty WAV so downstream code can
             # detect "too small" cleanly rather than crash on a missing file.
@@ -342,10 +356,11 @@ class Recorder:
                 w.setframerate(TARGET_RATE)
             return
 
+        split = bool(self.split_channels and mic_t and sys_t)
         readers = [wave.open(str(t), "rb") for t in tracks]
         try:
             out = wave.open(str(self._output_path), "wb")
-            out.setnchannels(1)
+            out.setnchannels(2 if split else 1)
             out.setsampwidth(2)
             out.setframerate(TARGET_RATE)
             try:
@@ -359,13 +374,27 @@ class Recorder:
                         for c in chunks
                     ]
                     n = max((a.shape[0] for a in arrays), default=0)
-                    mixed = np.zeros(n, dtype=np.int32)
-                    for a in arrays:
-                        if a.shape[0] < n:
-                            a = np.pad(a, (0, n - a.shape[0]))
-                        mixed += a
-                    mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-                    out.writeframes(mixed.tobytes())
+                    padded = [
+                        np.pad(a, (0, n - a.shape[0])) if a.shape[0] < n else a
+                        for a in arrays
+                    ]
+                    if split:
+                        # readers[0] is the mic track, readers[1] the system
+                        # track (tracks list order). Interleave as stereo.
+                        frames = np.stack(
+                            [padded[0], padded[1]], axis=1
+                        )
+                        out.writeframes(
+                            np.clip(frames, -32768, 32767)
+                            .astype(np.int16)
+                            .tobytes()
+                        )
+                    else:
+                        mixed = np.zeros(n, dtype=np.int32)
+                        for a in padded:
+                            mixed += a
+                        mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+                        out.writeframes(mixed.tobytes())
             finally:
                 out.close()
         finally:

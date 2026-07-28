@@ -34,6 +34,15 @@ backend = "parakeet"
 # HuggingFace model id used when backend = "parakeet"
 parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 
+# Speaker attribution. When true (default) and both mic + system audio are
+# captured, the recording keeps them as separate channels and transcript
+# lines are labeled by voice: M1, M2, ... for the local-mic side (the room —
+# may be several people), R1, R2, ... for remote participants on system
+# audio. Splitting voices on the same side uses sherpa-onnx diarization
+# (~36 MB of models auto-downloaded on first use); without it, labels fall
+# back to one per side. Set false for the old unlabeled mixed-mono behavior.
+speaker_labels = true
+
 [whisper]
 # Path to your whisper.cpp binary
 # Install: https://github.com/ggerganov/whisper.cpp

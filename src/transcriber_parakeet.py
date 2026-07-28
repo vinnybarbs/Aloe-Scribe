@@ -201,6 +201,60 @@ class ParakeetTranscriber:
         except Exception:
             return ""
 
+    def stream_sentences(self) -> list:
+        """Timestamped sentences from the current stream result, as
+        [{'start': s, 'end': s, 'text': str}, ...]. Used for speaker
+        attribution at finalize; [] when no stream or no sentences."""
+        if self._stream is None:
+            return []
+
+        def _collect():
+            sentences = getattr(self._stream.result, "sentences", None) or []
+            return [
+                {
+                    "start": float(getattr(s, "start", 0) or 0),
+                    "end": float(getattr(s, "end", 0) or 0),
+                    "text": (getattr(s, "text", "") or "").strip(),
+                }
+                for s in sentences
+            ]
+
+        try:
+            return self._run(_collect)
+        except Exception:
+            return []
+
+    def transcribe_sentences(self, audio_path: Path) -> Optional[list]:
+        """Batch-transcribe to timestamped sentences (same dict shape as
+        stream_sentences). The audio must be mono; callers with a split WAV
+        downmix first. None on failure."""
+        if not audio_path.exists() or not self._ensure_loaded():
+            return None
+        try:
+            result = self._run(
+                self._model.transcribe,
+                str(audio_path),
+                chunk_duration=120.0,
+                overlap_duration=15.0,
+            )
+        except Exception as e:
+            log.error(f"Parakeet transcription failed: {e}")
+            return None
+        sentences = getattr(result, "sentences", None) or []
+        out = [
+            {
+                "start": float(getattr(s, "start", 0) or 0),
+                "end": float(getattr(s, "end", 0) or 0),
+                "text": (getattr(s, "text", "") or "").strip(),
+            }
+            for s in sentences
+        ]
+        if not out:
+            text = (getattr(result, "text", "") or "").strip()
+            if text:
+                out = [{"start": 0.0, "end": 0.0, "text": text}]
+        return out
+
     def stream_markdown(self, title: str, date: datetime) -> str:
         """Build the transcript markdown from the current stream result."""
         if self._stream is None:
