@@ -29,7 +29,7 @@ REPO_CONFIG="$PROJECT_DIR/config/config.toml"
 TEMPLATE="$PROJECT_DIR/config/config.toml.example"
 
 echo ""
-echo -e "${GREEN}[1/4]${NC} Fetching the latest version from GitHub..."
+echo -e "${GREEN}[1/5]${NC} Fetching the latest version from GitHub..."
 if ! git pull --ff-only origin main; then
     echo ""
     echo -e "${YELLOW}Couldn't fast-forward.${NC} You may have uncommitted code changes." >&2
@@ -37,7 +37,7 @@ if ! git pull --ff-only origin main; then
     exit 1
 fi
 
-echo -e "${GREEN}[2/4]${NC} Preserving your current settings..."
+echo -e "${GREEN}[2/5]${NC} Preserving your current settings..."
 if [ -f "$INSTALLED_CONFIG" ]; then
     # Carry the live settings from the installed bundle into the repo so the
     # rebuild bakes YOUR settings, not the template defaults.
@@ -51,7 +51,7 @@ else
     echo "  Using existing config/config.toml."
 fi
 
-echo -e "${GREEN}[3/4]${NC} Ensuring the Parakeet model is local (no Hugging Face)..."
+echo -e "${GREEN}[3/5]${NC} Ensuring the Parakeet model is local (no Hugging Face)..."
 if grep -qE '^backend[[:space:]]*=[[:space:]]*"parakeet"' "$REPO_CONFIG" 2>/dev/null; then
     # Migrates older installs that still point at the Hugging Face model id onto
     # the GitHub-hosted local copy. No-op once the model is already local.
@@ -60,7 +60,25 @@ else
     echo "  Backend is not parakeet — skipping."
 fi
 
-echo -e "${GREEN}[4/4]${NC} Rebuilding and reinstalling the app (~1 minute)..."
+echo -e "${GREEN}[4/5]${NC} Syncing Python dependencies..."
+# New app versions can need new packages (e.g. sherpa-onnx for speaker
+# labels). Idempotent and fast when nothing changed. Hash-verified on Apple
+# Silicon, same as install-mac.sh. Non-fatal: optional deps degrade
+# gracefully, so a network hiccup here shouldn't block the update.
+VENV_DIR="$PROJECT_DIR/.venv"
+if [ -x "$VENV_DIR/bin/pip" ]; then
+    if [ "$(uname -m)" = "arm64" ]; then
+        "$VENV_DIR/bin/pip" install -q --require-hashes -r "$PROJECT_DIR/requirements-mac.txt" \
+            && echo "  Dependencies up to date." \
+            || echo -e "  ${YELLOW}⚠ Dependency sync failed — the app still works; optional features may be off. Re-run the update to retry.${NC}"
+    else
+        echo "  Intel Mac — skipping (whisper fallback has no new deps)."
+    fi
+else
+    echo -e "  ${YELLOW}⚠ No venv at $VENV_DIR — run scripts/install-mac.sh for a full install.${NC}"
+fi
+
+echo -e "${GREEN}[5/5]${NC} Rebuilding and reinstalling the app (~1 minute)..."
 # Ensure the stable signing identity exists (once) so this and future updates
 # don't reset Screen Recording / Microphone permissions. Non-fatal.
 bash scripts/create-signing-cert.sh || true
