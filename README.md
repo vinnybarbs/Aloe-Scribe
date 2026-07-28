@@ -236,8 +236,15 @@ model_path  = "~/whisper.cpp/models/ggml-large-v3-turbo.bin"
 local_dir = "~/meetings"   # or change with the Choose button in the app
 
 [app]
-# Hard cap on recording length. Auto-stops and transcribes after this many minutes.
+# Hard cap on recording length. Auto-stops and transcribes after this many
+# minutes. Enforced on wall-clock time, so it works even if the Mac slept
+# mid-recording.
 max_duration_minutes = 120
+
+# Auto-stop after this many minutes of continuous silence (mic AND system
+# audio quiet), so a forgotten recording ends minutes after the meeting does
+# instead of hours later at the cap. 0 disables.
+silence_timeout_minutes = 10
 ```
 
 ## Health check

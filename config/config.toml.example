@@ -78,8 +78,15 @@ rclone_remote = "sharepoint:Documents/Meetings"
 sync_on_save = true
 
 [app]
-# Minutes of silence before auto-stopping recording
-silence_timeout_minutes = 5
+# Hard cap on recording length: auto-stops and transcribes after this many
+# minutes, even through system sleep. Safety net for forgotten recordings.
+max_duration_minutes = 120
+
+# Auto-stop after this many minutes of continuous silence (both the mic and
+# system audio quiet). Catches a forgotten recording within minutes instead
+# of waiting for the cap. Set 0 to disable. Raise it if your meetings have
+# long stretches with nobody talking and no system audio.
+silence_timeout_minutes = 10
 
 # Show a desktop notification when sync completes
 notify_on_sync = true

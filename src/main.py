@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -162,6 +163,39 @@ def _pcm_to_mono_float(raw: bytes, channels: int):
     return samples.astype(np.float32) / 32768.0
 
 
+def _recent_wav_rms(wav_path: Path, seconds: float = 30.0):
+    """RMS level (0..1) of the last `seconds` of a growing 16 kHz int16 WAV.
+    For split (stereo) recordings, returns the LOUDER channel's RMS — one live
+    side is enough to count as activity. None when unreadable/empty, so a
+    transient read error is never mistaken for silence."""
+    import numpy as np
+
+    try:
+        if not wav_path.exists():
+            return None
+        channels = _wav_header_channels(wav_path)
+        frame_bytes = 2 * channels
+        size = wav_path.stat().st_size
+        if size <= 44 + frame_bytes:
+            return None
+        want = int(seconds * 16000) * frame_bytes
+        start = max(44, size - want)
+        start = 44 + ((start - 44) // frame_bytes) * frame_bytes
+        with open(wav_path, "rb") as f:
+            f.seek(start)
+            raw = f.read()
+        raw = raw[: len(raw) - (len(raw) % frame_bytes)]
+        if not raw:
+            return None
+        a = np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768.0
+        if channels > 1:
+            a = a.reshape(-1, channels)
+            return float(np.max(np.sqrt(np.mean(a * a, axis=0))))
+        return float(np.sqrt(np.mean(a * a)))
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Load config
 # ---------------------------------------------------------------------------
@@ -181,9 +215,14 @@ class AloeScribe:
         self.config = config
         self._recording_path: Path | None = None
         self._current_meeting: Meeting | None = None
-        self._max_duration_timer: Optional[threading.Timer] = None
+        self._watchdog_stop: Optional[threading.Event] = None
         self._max_duration_seconds = int(
             config["app"].get("max_duration_minutes", 120) * 60
+        )
+        # Auto-stop after this much continuous silence (0 disables). Guards
+        # against forgotten recordings that run for hours after a meeting ends.
+        self._silence_timeout_seconds = int(
+            config["app"].get("silence_timeout_minutes", 15) * 60
         )
 
         # Resolve output dir
@@ -276,7 +315,9 @@ class AloeScribe:
 
     def _quit(self):
         log.info("Shutting down...")
-        self._cancel_max_duration_timer()
+        if self._watchdog_stop is not None:
+            self._watchdog_stop.set()
+            self._watchdog_stop = None
         if self.recorder.is_recording():
             wav_path = self.recorder.stop()
             if wav_path:
@@ -348,33 +389,89 @@ class AloeScribe:
         ok = self.recorder.start(self._recording_path)
         if ok:
             cap_min = self._max_duration_seconds // 60
+            silence_min = self._silence_timeout_seconds // 60
+            silence_note = (
+                f", or after {silence_min} min of silence" if silence_min else ""
+            )
             log.info(
-                f"Recording started: {self._recording_path.name} (auto-stop in {cap_min} min)"
+                f"Recording started: {self._recording_path.name} "
+                f"(auto-stop at {cap_min} min{silence_note})"
             )
-            self._max_duration_timer = threading.Timer(
-                self._max_duration_seconds, self._auto_stop
-            )
-            self._max_duration_timer.daemon = True
-            self._max_duration_timer.start()
+            self._watchdog_stop = threading.Event()
+            threading.Thread(
+                target=self._watchdog_loop,
+                args=(self._watchdog_stop,),
+                daemon=True,
+            ).start()
             self._start_streaming(self._recording_path, self._md_path)
         else:
             log.error("Failed to start recording")
             self.tray.set_idle()
 
-    def _auto_stop(self):
-        """Fired by the duration timer — safety net so a forgotten recording doesn't run forever."""
+    # Watchdog: the safety net for forgotten recordings. A polling thread on
+    # WALL-CLOCK time, not threading.Timer — macOS pauses the monotonic clock
+    # during system sleep, so a one-shot 120-min timer silently stretches past
+    # an entire afternoon when the lid closes or the Mac naps mid-recording
+    # (that is exactly how a 2-hour cap once let a recording run 3+ hours).
+    WATCHDOG_INTERVAL_S = 30.0
+    # RMS below this (0..1 full scale) counts a 30 s window as silent. Speech
+    # sits well above it; an idle office with digital-silence system audio
+    # sits below it.
+    SILENCE_RMS = 0.0045
+
+    def _watchdog_loop(self, stop_event: threading.Event):
+        last_active = time.time()
+        while not stop_event.wait(self.WATCHDOG_INTERVAL_S):
+            if not self.recorder.is_recording():
+                return
+            started = getattr(self, "_recording_start", None)
+            if (
+                started
+                and (datetime.now() - started).total_seconds()
+                >= self._max_duration_seconds
+            ):
+                self._auto_stop(
+                    f"hit the {self._max_duration_seconds // 60}-min cap"
+                )
+                return
+            if self._silence_timeout_seconds <= 0:
+                continue
+            rms = self._recent_audio_rms()
+            if rms is None or rms >= self.SILENCE_RMS:
+                last_active = time.time()
+            elif time.time() - last_active >= self._silence_timeout_seconds:
+                self._auto_stop(
+                    f"no audio activity for "
+                    f"{self._silence_timeout_seconds // 60} min"
+                )
+                return
+
+    def _recent_audio_rms(self):
+        """Recent capture level: Windows exposes a rolling in-memory ring;
+        the Mac helper writes the WAV continuously, so read its tail."""
+        if hasattr(self.recorder, "snapshot_recent"):
+            try:
+                import numpy as np
+
+                s = self.recorder.snapshot_recent(30.0)
+                if s is None or not len(s):
+                    return None
+                return float(
+                    np.sqrt(np.mean(np.asarray(s, dtype=np.float64) ** 2))
+                )
+            except Exception:
+                return None
+        if self._recording_path is None:
+            return None
+        return _recent_wav_rms(self._recording_path)
+
+    def _auto_stop(self, reason: str):
+        """Watchdog-triggered stop — the transcript is still produced normally."""
         if not self.recorder.is_recording():
             return
-        log.warning(
-            f"Recording hit the {self._max_duration_seconds // 60}-min cap — auto-stopping"
-        )
+        log.warning(f"Auto-stopping recording — {reason}")
         self.tray.set_processing()
         self._stop_and_transcribe()
-
-    def _cancel_max_duration_timer(self):
-        if self._max_duration_timer:
-            self._max_duration_timer.cancel()
-            self._max_duration_timer = None
 
     # ------------------------------------------------------------------ #
     # Live streaming transcription (real-time, the whole recording)        #
@@ -516,7 +613,9 @@ class AloeScribe:
 
     def _stop_and_transcribe(self):
         """Stop the recorder and finalize the transcript on a background thread."""
-        self._cancel_max_duration_timer()
+        if self._watchdog_stop is not None:
+            self._watchdog_stop.set()
+            self._watchdog_stop = None
         # Stop the live loop and wait for it to release the inference thread.
         if getattr(self, "_live_stop", None) is not None:
             self._live_stop.set()
