@@ -65,6 +65,11 @@ local_dir = "~/meetings"
 # {date} = 2026-04-06, {time} = 1000, {title} = meeting-title-slugified
 filename_format = "{date}-{time}-{title}.md"
 
+# Keep the recording WAV next to the transcript instead of deleting it after
+# a successful transcription (~200 MB per hour of meeting). Useful when
+# checking speaker labels or re-transcribing later.
+keep_wav = false
+
 [sync]
 # Set to true once rclone is configured
 enabled = false

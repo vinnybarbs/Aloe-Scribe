@@ -118,19 +118,16 @@ def transcribe_one(
     log.info(f"Output: {md_path}")
     log.info(f"Title:  {meeting_title}  ({meeting_date.isoformat()})")
 
-    # Split recordings are stereo (ch0 = mic, ch1 = system). The STT backends
-    # expect mono, so downmix to a hidden temp file — and when the backend can
-    # emit timestamped sentences, produce the speaker-labeled transcript the
-    # app itself would have written.
+    # Split recordings are stereo (ch0 = mic, ch1 = system). When the backend
+    # can emit timestamped sentences, produce the same per-channel
+    # speaker-labeled transcript the app itself writes; otherwise transcribe
+    # a mono downmix.
     import speakers
 
-    stt_input = wav
-    tmp_mono = None
-    if speakers.wav_channels(wav) == 2:
-        tmp = wav.with_name(f".{wav.stem}.mono.wav")
-        if speakers.downmix_to_mono_wav(wav, tmp):
-            stt_input, tmp_mono = tmp, tmp
-            log.info("Split (stereo) recording — downmixed for STT, labeling speakers")
+    is_split = speakers.wav_channels(wav) == 2
+    if is_split:
+        log.info("Split (stereo) recording — transcribing per channel, labeling speakers")
+    source = "aloe-scribe-windows" if sys.platform == "win32" else "aloe-scribe-mac"
 
     # Try primary backend, then whisper fallback if allowed and available.
     backends = [primary_backend]
@@ -141,61 +138,49 @@ def transcribe_one(
     ):
         backends.append("whisper")
 
-    try:
-        for backend in backends:
-            log.info(f"Transcribing with backend: {backend}")
+    for backend in backends:
+        log.info(f"Transcribing with backend: {backend}")
+        result = None
+        tmp_mono = None
+        try:
+            transcriber = build_transcriber(config, backend)
+            if is_split and hasattr(transcriber, "transcribe_sentences"):
+                md = speakers.build_labeled_transcript(
+                    wav,
+                    transcriber.transcribe_sentences,
+                    speakers.Diarizer(),
+                    meeting_title,
+                    meeting_date,
+                    source,
+                )
+                if md:
+                    md_path.write_text(md, encoding="utf-8")
+                    result = md_path
+            if result is None:
+                stt_input = wav
+                if is_split:
+                    tmp = wav.with_name(f".{wav.stem}.mono.wav")
+                    if speakers.downmix_to_mono_wav(wav, tmp):
+                        stt_input, tmp_mono = tmp, tmp
+                result = transcriber.transcribe(
+                    audio_path=stt_input,
+                    output_path=md_path,
+                    meeting_title=meeting_title,
+                    meeting_date=meeting_date,
+                )
+        except Exception as e:
+            log.error(f"  {backend} raised: {e}")
             result = None
-            try:
-                transcriber = build_transcriber(config, backend)
-                if tmp_mono is not None and hasattr(transcriber, "transcribe_sentences"):
-                    sentences = transcriber.transcribe_sentences(stt_input)
-                    res = (
-                        speakers.label_sentences(wav, sentences, speakers.Diarizer())
-                        if sentences
-                        else None
-                    )
-                    if res:
-                        labeled, diarized = res
-                        from frontmatter import build_frontmatter
-
-                        source = (
-                            "aloe-scribe-windows"
-                            if sys.platform == "win32"
-                            else "aloe-scribe-mac"
-                        )
-                        duration = max((s.end for s in labeled), default=0.0)
-                        fm = build_frontmatter(
-                            meeting_title,
-                            meeting_date,
-                            duration,
-                            source=source,
-                            extras=speakers.speaker_frontmatter_extras(labeled, diarized),
-                        )
-                        md_path.write_text(
-                            fm + "\n\n" + speakers.build_labeled_body(labeled) + "\n",
-                            encoding="utf-8",
-                        )
-                        result = md_path
-                if result is None:
-                    result = transcriber.transcribe(
-                        audio_path=stt_input,
-                        output_path=md_path,
-                        meeting_title=meeting_title,
-                        meeting_date=meeting_date,
-                    )
-            except Exception as e:
-                log.error(f"  {backend} raised: {e}")
-                result = None
-            if result:
-                log.info(f"Transcript written ({backend}): {md_path}")
-                return md_path
-            log.warning(f"  {backend} produced no transcript")
-    finally:
-        if tmp_mono is not None:
-            try:
-                tmp_mono.unlink()
-            except Exception:
-                pass
+        finally:
+            if tmp_mono is not None:
+                try:
+                    tmp_mono.unlink()
+                except Exception:
+                    pass
+        if result:
+            log.info(f"Transcript written ({backend}): {md_path}")
+            return md_path
+        log.warning(f"  {backend} produced no transcript")
 
     log.error(f"All backends failed for: {wav}")
     return None

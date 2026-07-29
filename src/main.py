@@ -228,6 +228,10 @@ class AloeScribe:
         # Resolve output dir
         self.output_dir = Path(config["output"]["local_dir"]).expanduser()
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Keep the WAV next to the transcript instead of deleting it after a
+        # successful transcription (~200 MB/hour). Lets a mislabeled meeting
+        # be re-analyzed or re-transcribed later.
+        self._keep_wav = bool(config["output"].get("keep_wav", False))
 
         # Speaker attribution: record mic/system as separate channels and
         # label transcript lines (M* = mic side, R* = remote side).
@@ -640,12 +644,13 @@ class AloeScribe:
             target=self._transcribe_and_sync, args=(wav_path,), daemon=True
         ).start()
 
-    def _build_labeled_markdown(
-        self, wav_path: Path, sentences: list, title: str, when: datetime
-    ) -> str:
-        """Markdown with M*/R* speaker labels, or '' when labeling is disabled,
-        the WAV is mono (single-source recording), or attribution fails."""
-        if not self._speaker_labels or not sentences:
+    def _labeled_markdown(self, wav_path: Path, title: str, when: datetime) -> str:
+        """Full per-channel labeled transcript markdown, or '' when labeling
+        is disabled, the WAV is mono (single-source recording), the backend
+        has no sentence API, or anything in the pipeline fails."""
+        if not self._speaker_labels:
+            return ""
+        if not hasattr(self.transcriber, "transcribe_sentences"):
             return ""
         try:
             import speakers
@@ -654,24 +659,20 @@ class AloeScribe:
                 return ""
             if self._diarizer is None:
                 self._diarizer = speakers.Diarizer()
-            res = speakers.label_sentences(wav_path, sentences, self._diarizer)
-            if not res:
-                return ""
-            labeled, diarized = res
-            from frontmatter import build_frontmatter
-
-            duration = max((s.end for s in labeled), default=0.0)
             source = (
                 "aloe-scribe-windows" if sys.platform == "win32" else "aloe-scribe-mac"
             )
-            fm = build_frontmatter(
-                title,
-                when,
-                duration,
-                source=source,
-                extras=speakers.speaker_frontmatter_extras(labeled, diarized),
+            return (
+                speakers.build_labeled_transcript(
+                    wav_path,
+                    self.transcriber.transcribe_sentences,
+                    self._diarizer,
+                    title,
+                    when,
+                    source,
+                )
+                or ""
             )
-            return fm + "\n\n" + speakers.build_labeled_body(labeled) + "\n"
         except Exception as e:
             log.warning(f"Speaker labeling failed — keeping unlabeled transcript: {e}")
             return ""
@@ -702,33 +703,26 @@ class AloeScribe:
             self.output_dir / f"{wav_path.stem}.md"
         )
 
-        # Split recordings are stereo and the STT backends expect mono: downmix
-        # to a hidden sibling file for transcription. The stereo original stays
-        # around for speaker attribution until the transcript is written.
-        title = meeting.title if meeting else "Recording"
-        stt_input, tmp_mono = self._mono_stt_input(wav_path)
-
-        # Transcribe. Guard against the backend raising (e.g. a Parakeet Metal
+        # Preferred path for split recordings: per-channel transcription with
+        # speaker labels. Falls back to a plain transcribe of the mono
+        # downmix. Guard against the backend raising (e.g. a Parakeet Metal
         # error) — an uncaught exception here would kill this daemon thread
         # silently, leaving the WAV orphaned with no transcript and no notice.
+        title = meeting.title if meeting else "Recording"
         result = None
-        if (
-            tmp_mono is not None
-            and self._speaker_labels
-            and hasattr(self.transcriber, "transcribe_sentences")
-        ):
+        md = self._labeled_markdown(wav_path, title, when)
+        if md:
             try:
-                sentences = self.transcriber.transcribe_sentences(stt_input)
-                md = self._build_labeled_markdown(wav_path, sentences, title, when)
-                if md:
-                    md_path.parent.mkdir(parents=True, exist_ok=True)
-                    md_path.write_text(md, encoding="utf-8")
-                    result = md_path
-                    log.info(f"Transcript saved (speaker-labeled): {md_path}")
+                md_path.parent.mkdir(parents=True, exist_ok=True)
+                md_path.write_text(md, encoding="utf-8")
+                result = md_path
+                log.info(f"Transcript saved (speaker-labeled): {md_path}")
             except Exception as e:
-                log.warning(f"Labeled transcription failed, retrying plain: {e}")
+                log.error(f"Writing labeled transcript failed: {e}")
 
+        tmp_mono = None
         if result is None:
+            stt_input, tmp_mono = self._mono_stt_input(wav_path)
             try:
                 result = self.transcriber.transcribe(
                     audio_path=stt_input,
@@ -746,12 +740,14 @@ class AloeScribe:
                 pass
 
         if result:
-            # Only delete the WAV once we actually have the transcript.
-            try:
-                wav_path.unlink()
-                log.debug(f"Deleted WAV: {wav_path.name}")
-            except Exception:
-                pass
+            # Only delete the WAV once we actually have the transcript (and
+            # not even then when keep_wav is set).
+            if not self._keep_wav:
+                try:
+                    wav_path.unlink()
+                    log.debug(f"Deleted WAV: {wav_path.name}")
+                except Exception:
+                    pass
             self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
         else:
@@ -812,24 +808,19 @@ class AloeScribe:
         md_path = wav_path.with_suffix(".md")
         log.info(f"Transcribing existing file: {wav_path.name} → {md_path.name}")
 
-        stt_input, tmp_mono = self._mono_stt_input(wav_path)
         result = None
-        if (
-            tmp_mono is not None
-            and self._speaker_labels
-            and hasattr(self.transcriber, "transcribe_sentences")
-        ):
+        md = self._labeled_markdown(wav_path, title, when)
+        if md:
             try:
-                sentences = self.transcriber.transcribe_sentences(stt_input)
-                md = self._build_labeled_markdown(wav_path, sentences, title, when)
-                if md:
-                    md_path.write_text(md, encoding="utf-8")
-                    result = md_path
-                    log.info(f"Transcript saved (speaker-labeled): {md_path}")
+                md_path.write_text(md, encoding="utf-8")
+                result = md_path
+                log.info(f"Transcript saved (speaker-labeled): {md_path}")
             except Exception as e:
-                log.warning(f"Labeled transcription failed, retrying plain: {e}")
+                log.error(f"Writing labeled transcript failed: {e}")
 
+        tmp_mono = None
         if result is None:
+            stt_input, tmp_mono = self._mono_stt_input(wav_path)
             try:
                 result = self.transcriber.transcribe(
                     audio_path=stt_input,

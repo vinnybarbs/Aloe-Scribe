@@ -308,12 +308,14 @@ The header carries the meeting as a time window, so the agent can match the cale
 
 ## Speaker labels
 
-When both the mic and system audio are being captured, the recorder keeps them as separate channels instead of mixing them (macOS: stereo WAV from the Swift helper. Windows: stereo merge of the two WASAPI tracks). That split gives every transcript line a speaker label with no guesswork about which side of the call it came from:
+When both the mic and system audio are being captured, the recorder keeps them as separate channels instead of mixing them (macOS: stereo WAV from the Swift helper. Windows: stereo merge of the two WASAPI tracks). Each channel is then transcribed separately, so which side of the call a line came from is a structural fact rather than a guess, and two people talking at the same time on opposite sides are both captured instead of colliding in one mono stream. A near-silent channel (a muted mic) is skipped, and mic lines that are just acoustic echo of the remote audio are deduplicated away on setups without echo cancellation. The labels:
 
 - `M1, M2, ...` are voices heard on the local microphone. This is the in-room side. It is often the machine's owner, but not always, so nothing is ever labeled with a name. A laptop recording a conference room will produce several M speakers.
 - `R1, R2, ...` are voices heard on system audio, meaning the remote participants.
 
 Telling voices apart within a side uses offline speaker diarization (sherpa-onnx, pyannote segmentation plus CAM++ embeddings, about 36 MB of models downloaded once to `~/.cache/aloe-scribe/diarization/`). If sherpa-onnx or its models are unavailable, the transcript still gets channel-level labels: everything on the mic is `M1`, everything remote is `R1`, and the header says so in `speaker_note`.
+
+Accuracy expectations: the M-versus-R side of a line is reliable because it comes from the channel itself. Splits within a side (R1 versus R2) are statistical and imperfect, especially over compressed meeting audio — two similar voices can merge, and one person can occasionally split into two labels. Treat the R-number as a strong hint, not ground truth, and let the summary agent reconcile against the attendee list.
 
 The labels are deliberately anonymous. The downstream summary agent maps them to names using the matched calendar event and conversational context ("thanks, Priya" said by M1 right after R2 finishes is a strong hint). The `speaker_key` header field explains the scheme to the agent so it does not have to guess.
 

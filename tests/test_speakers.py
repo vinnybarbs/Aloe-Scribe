@@ -50,54 +50,102 @@ def make_split_wav(path: Path, mic_bursts, sys_bursts, seconds=10.0):
         w.writeframes(frames.tobytes())
 
 
-def test_channel_labels(tmp: Path):
+def test_per_channel_labels(tmp: Path):
+    """Per-channel transcription: overlapping mic+system speech both survive,
+    channels label structurally, merged output is time-ordered."""
+    from datetime import datetime
+
     wav = tmp / "split.wav"
+    # Note 6.0-8.0: BOTH sides talk at once (crosstalk) — the whole point of
+    # per-channel transcription is that neither side is lost.
     make_split_wav(
         wav,
         mic_bursts=[(0.0, 2.0), (6.0, 8.0)],
-        sys_bursts=[(3.0, 5.0), (8.5, 9.5)],
+        sys_bursts=[(3.0, 5.0), (6.0, 8.0), (8.5, 9.5)],
     )
     assert speakers.wav_channels(wav) == 2
 
-    sentences = [
-        {"start": 0.2, "end": 1.8, "text": "hello from the room"},
-        {"start": 3.2, "end": 4.8, "text": "hello from the remote side"},
-        {"start": 6.2, "end": 7.8, "text": "the room again"},
-        {"start": 8.6, "end": 9.4, "text": "remote again"},
-    ]
-    res = speakers.label_sentences(wav, sentences, diarizer=None)
-    assert res is not None
-    labeled, diarized = res
-    assert diarized is False
-    assert [s.label for s in labeled] == ["M1", "R1", "M1", "R1"], [
-        s.label for s in labeled
-    ]
-    assert [s.text for s in labeled] == [s["text"] for s in sentences]
+    calls = []
 
-    body = speakers.build_labeled_body(labeled)
-    assert "[00:00] M1: hello from the room" in body
-    assert "[00:03] R1: hello from the remote side" in body
+    def fake_transcribe(path: Path):
+        calls.append(path.name)
+        if ".ch0." in path.name:  # mic
+            return [
+                {"start": 0.2, "end": 1.8, "text": "hello from the room"},
+                {"start": 6.1, "end": 7.9, "text": "the room talking over"},
+            ]
+        return [
+            {"start": 3.2, "end": 4.8, "text": "hello from the remote side"},
+            {"start": 6.0, "end": 7.8, "text": "remote talking at the same time"},
+            {"start": 8.6, "end": 9.4, "text": "remote again"},
+        ]
 
-    extras = speakers.speaker_frontmatter_extras(labeled, diarized)
-    fm = build_frontmatter("Test", __import__("datetime").datetime.now(), 10.0,
-                           extras=extras)
-    assert "speakers: [M1, R1]" in fm
-    assert "speaker_key:" in fm
-    assert "speaker_note:" in fm  # diarization did not run
-    print("ok: channel labels")
+    md = speakers.build_labeled_transcript(
+        wav, fake_transcribe, None, "Test", datetime.now(), "aloe-scribe-mac"
+    )
+    assert md is not None
+    assert len(calls) == 2, calls  # both channels transcribed
+    assert "[00:00] M1: hello from the room" in md
+    assert "[00:03] R1: hello from the remote side" in md
+    # Crosstalk: both sides present around 6-8 s
+    assert "M1: the room talking over" in md
+    assert "R1: remote talking at the same time" in md
+    assert "speakers: [M1, R1]" in md
+    assert "speaker_note:" in md  # diarizer=None → channel-level only
+    # Time-ordered merge
+    assert md.index("hello from the room") < md.index("hello from the remote side")
+    print("ok: per-channel labels + crosstalk")
+
+
+def test_silent_channel_skipped(tmp: Path):
+    """A dead (muted-mic) channel must not be transcribed at all."""
+    from datetime import datetime
+
+    wav = tmp / "muted.wav"
+    make_split_wav(wav, mic_bursts=[], sys_bursts=[(0.0, 6.0)], seconds=8.0)
+
+    calls = []
+
+    def fake_transcribe(path: Path):
+        calls.append(path.name)
+        return [{"start": 0.5, "end": 5.5, "text": "only remote speech"}]
+
+    md = speakers.build_labeled_transcript(
+        wav, fake_transcribe, None, "Test", datetime.now(), "aloe-scribe-mac"
+    )
+    assert md is not None
+    assert len(calls) == 1 and ".ch1." in calls[0], calls
+    assert "R1: only remote speech" in md
+    assert "M1" not in md
+    print("ok: silent channel skipped")
+
+
+def test_echo_dedupe():
+    """Mic sentences that duplicate remote speech in time AND words are echo."""
+    sys_s = [(10.0, 13.0, "we should review the quarterly numbers")]
+    mic_s = [
+        (10.2, 13.1, "we should review the quarterly numbers"),  # echo → drop
+        (14.0, 15.0, "yes I agree completely"),                  # real → keep
+    ]
+    kept = speakers.dedupe_echo(mic_s, sys_s)
+    assert [k[2] for k in kept] == ["yes I agree completely"], kept
+    print("ok: echo dedupe")
 
 
 def test_mono_passthrough(tmp: Path):
     """Mono WAVs are not split recordings — labeling must decline."""
+    from datetime import datetime
+
     wav = tmp / "mono.wav"
     with wave.open(str(wav), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(RATE)
         w.writeframes(np.zeros(RATE, dtype=np.int16).tobytes())
-    assert speakers.label_sentences(
-        wav, [{"start": 0, "end": 1, "text": "x"}], None
-    ) is None
+    md = speakers.build_labeled_transcript(
+        wav, lambda p: [], None, "Test", datetime.now(), "aloe-scribe-mac"
+    )
+    assert md is None
     print("ok: mono passthrough")
 
 
@@ -133,7 +181,9 @@ def test_diarizer_optional(tmp: Path):
 def main():
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        test_channel_labels(tmp)
+        test_per_channel_labels(tmp)
+        test_silent_channel_skipped(tmp)
+        test_echo_dedupe()
         test_mono_passthrough(tmp)
         test_downmix(tmp)
         test_diarizer_optional(tmp)

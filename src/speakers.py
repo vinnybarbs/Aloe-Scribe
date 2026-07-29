@@ -8,9 +8,12 @@ timestamps line up with both.
 
 Attribution happens in two layers:
 
-1. Channel: each transcript sentence is assigned to the mic side or the
-   system side by comparing RMS energy across its time span. This is
-   deterministic and needs no models.
+1. Channel: each channel is transcribed SEPARATELY, so which side a sentence
+   came from is a structural fact, not a guess — and speech that overlaps
+   across the two sides (people talking over each other) is fully captured
+   instead of colliding in a mono downmix. Mic sentences that are acoustic
+   echo of remote speech (no-AEC setups) are deduped against the system
+   channel. Near-silent channels are skipped entirely.
 2. Speaker: each channel is run through offline diarization (sherpa-onnx,
    pyannote segmentation + CAM++ speaker embeddings) to split multiple
    voices on the same side. Diarization is optional — if sherpa-onnx or its
@@ -282,14 +285,6 @@ def _sentence_fields(s) -> Optional[tuple]:
     return start, end, text
 
 
-def _rms(arr) -> float:
-    import numpy as np
-
-    if arr is None or len(arr) == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(arr.astype(np.float64) ** 2)))
-
-
 def _overlap_speaker(turns, start: float, end: float) -> Optional[int]:
     """Cluster id with the largest time overlap with [start, end], or the
     nearest turn if nothing overlaps (short sentences between VAD gaps)."""
@@ -307,67 +302,171 @@ def _overlap_speaker(turns, start: float, end: float) -> Optional[int]:
     return best_id if best_id is not None else nearest_id
 
 
-def label_sentences(
-    wav_path: Path,
-    sentences,
-    diarizer: Optional[Diarizer] = None,
-) -> Optional[tuple]:
-    """
-    Attribute transcript sentences to speakers using the split WAV.
+def activity_fraction(samples, rate: int) -> float:
+    """Fraction of 1-second windows with speech-level energy. Used to skip
+    transcribing a dead channel (e.g. a hardware-muted Jabra)."""
+    import numpy as np
 
-    Returns (labeled, diarized): a list of LabeledSentence sorted by start,
-    and whether per-voice diarization actually ran (False = channel-level
-    labels only). Returns None when the WAV is not a split recording — the
-    caller keeps its unlabeled transcript. `diarizer=None` still yields
-    channel-level labels (all mic speech = M1, all system speech = R1).
-    """
-    loaded = load_split_channels(wav_path)
-    if loaded is None:
-        return None
-    mic, system, rate = loaded
+    n = len(samples) // rate
+    if n == 0:
+        return 0.0
+    w = samples[: n * rate].reshape(n, rate)
+    rms = np.sqrt((w.astype(np.float64) ** 2).mean(axis=1))
+    return float((rms > 0.0045).mean())
 
+
+def write_channel_wav(samples, rate: int, dst: Path) -> Path:
+    """Write one float32 channel back out as a mono int16 WAV for the STT
+    backend."""
+    import numpy as np
+
+    data = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
+    with wave.open(str(dst), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(data.tobytes())
+    return dst
+
+
+def dedupe_echo(mic_sentences: list, sys_sentences: list) -> list:
+    """Drop mic-channel sentences that are acoustic echo of remote speech.
+
+    On setups without echo cancellation (laptop speakers + built-in mic) the
+    mic hears the remote participants too, so the same words appear on both
+    channels at the same time. A mic sentence that overlaps a system sentence
+    in time AND says nearly the same thing is the speaker's echo, not the
+    local person — keep the clean system copy only.
+    """
+    import difflib
+
+    out = []
+    for m in mic_sentences:
+        dur = max(0.2, m[1] - m[0])
+        is_echo = False
+        for s in sys_sentences:
+            overlap = min(m[1], s[1]) - max(m[0], s[0])
+            if overlap / dur < 0.5:
+                continue
+            sim = difflib.SequenceMatcher(
+                None, m[2].lower(), s[2].lower()
+            ).ratio()
+            if sim > 0.65:
+                is_echo = True
+                break
+        if not is_echo:
+            out.append(m)
+    return out
+
+
+def _parse_sentences(sentences) -> list:
     parsed = []
     for s in sentences or []:
         f = _sentence_fields(s)
         if f:
             parsed.append(f)
-    if not parsed:
-        return None
     parsed.sort(key=lambda f: f[0])
+    return parsed
+
+
+def build_labeled_transcript(
+    wav_path: Path,
+    transcribe_sentences,
+    diarizer: Optional[Diarizer],
+    title: str,
+    when,
+    source: str,
+) -> Optional[str]:
+    """
+    Full speaker-labeled transcript from a split (stereo) recording.
+
+    Each channel is transcribed SEPARATELY — the channels are clean single-
+    party audio, so overlapping speech (two people talking at once) is fully
+    recovered instead of fighting for one mono downmix, and the mic/remote
+    attribution is structural rather than an energy guess. Near-silent
+    channels are skipped. Voices within a channel are split by diarization.
+
+    `transcribe_sentences`: callable(Path) -> list of {'start','end','text'}
+    (the backend's batch API). Returns the markdown string, or None when the
+    WAV is not a split recording or nothing was transcribed — callers fall
+    back to the plain downmix path.
+    """
+    from frontmatter import build_frontmatter
+
+    loaded = load_split_channels(wav_path)
+    if loaded is None:
+        return None
+    mic, system, rate = loaded
+
+    per_channel: dict = {}
+    tmp_files = []
+    try:
+        for channel, samples in ((CH_MIC, mic), (CH_SYSTEM, system)):
+            if activity_fraction(samples, rate) < 0.005:
+                log.info(
+                    f"Channel {channel} ({'mic' if channel == CH_MIC else 'system'}) "
+                    "is silent — skipping its transcription"
+                )
+                per_channel[channel] = []
+                continue
+            tmp = wav_path.with_name(f".{wav_path.stem}.ch{channel}.wav")
+            write_channel_wav(samples, rate, tmp)
+            tmp_files.append(tmp)
+            sentences = transcribe_sentences(tmp)
+            per_channel[channel] = _parse_sentences(sentences)
+    finally:
+        for t in tmp_files:
+            try:
+                t.unlink()
+            except Exception:
+                pass
+
+    per_channel[CH_MIC] = dedupe_echo(per_channel[CH_MIC], per_channel[CH_SYSTEM])
+    if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
+        return None
 
     turns = {CH_MIC: None, CH_SYSTEM: None}
     if diarizer is not None:
-        turns[CH_MIC] = diarizer.diarize(mic)
-        turns[CH_SYSTEM] = diarizer.diarize(system)
+        if per_channel[CH_MIC]:
+            turns[CH_MIC] = diarizer.diarize(mic)
+        if per_channel[CH_SYSTEM]:
+            turns[CH_SYSTEM] = diarizer.diarize(system)
 
-    # Cluster → final label, numbered by order of first appearance per side.
+    # Tag each sentence with (channel, cluster), merge both channels by time,
+    # then number labels by order of first appearance.
+    tagged = []
+    for channel in (CH_MIC, CH_SYSTEM):
+        for start, end, text in per_channel[channel]:
+            cluster = (
+                _overlap_speaker(turns[channel], start, end)
+                if turns[channel]
+                else 0
+            )
+            tagged.append((start, end, text, channel, 0 if cluster is None else cluster))
+    tagged.sort(key=lambda t: t[0])
+
     label_map: dict = {}
     counts = {CH_MIC: 0, CH_SYSTEM: 0}
-
-    def label_for(channel: int, cluster) -> str:
+    labeled = []
+    for start, end, text, channel, cluster in tagged:
         key = (channel, cluster)
         if key not in label_map:
             counts[channel] += 1
             label_map[key] = f"{_LABEL_PREFIX[channel]}{counts[channel]}"
-        return label_map[key]
+        labeled.append(
+            LabeledSentence(start=start, end=end, text=text, label=label_map[key])
+        )
 
-    out = []
-    n = len(mic)
-    for start, end, text in parsed:
-        i0 = max(0, min(n, int(start * rate)))
-        i1 = max(i0 + 1, min(n, int(end * rate) or i0 + 1))
-        channel = (
-            CH_MIC if _rms(mic[i0:i1]) >= _rms(system[i0:i1]) else CH_SYSTEM
-        )
-        cluster = _overlap_speaker(turns[channel], start, end) if turns[channel] else 0
-        if cluster is None:
-            cluster = 0
-        out.append(
-            LabeledSentence(start=start, end=end, text=text,
-                            label=label_for(channel, cluster))
-        )
     diarized = any(t is not None for t in turns.values())
-    return out, diarized
+    duration = max((s.end for s in labeled), default=0.0)
+    fm = build_frontmatter(
+        title,
+        when,
+        duration,
+        source=source,
+        extras=speaker_frontmatter_extras(labeled, diarized),
+    )
+    return fm + "\n\n" + build_labeled_body(labeled) + "\n"
 
 
 def speaker_frontmatter_extras(labeled: list, diarized: bool) -> list:
