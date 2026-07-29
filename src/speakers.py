@@ -408,6 +408,7 @@ def build_labeled_transcript(
     title: str,
     when,
     source: str,
+    progress=None,
 ) -> Optional[str]:
     """
     Full speaker-labeled transcript from a split (stereo) recording.
@@ -419,30 +420,66 @@ def build_labeled_transcript(
     channels are skipped. Voices within a channel are split by diarization.
 
     `transcribe_sentences`: callable(Path) -> list of {'start','end','text'}
-    (the backend's batch API). Returns the markdown string, or None when the
-    WAV is not a split recording or nothing was transcribed — callers fall
-    back to the plain downmix path.
+    (the backend's batch API). `progress`: optional callable(str) receiving
+    human-readable stage updates for the UI. Returns the markdown string, or
+    None when the WAV is not a split recording or nothing was transcribed —
+    callers fall back to the plain downmix path.
+
+    Speaker identification (CPU, onnxruntime) runs on a background thread
+    CONCURRENTLY with transcription (GPU on the Mac), so the wall-clock cost
+    is roughly max() of the two instead of their sum.
     """
+    import threading
+
     from frontmatter import build_frontmatter
 
+    def note(msg: str):
+        if progress is None:
+            return
+        try:
+            progress(msg)
+        except Exception:
+            pass
+
+    note("Analyzing audio channels…")
     loaded = load_split_channels(wav_path)
     if loaded is None:
         return None
     mic, system, rate = loaded
 
-    per_channel: dict = {}
+    chan_samples = {CH_MIC: mic, CH_SYSTEM: system}
+    chan_names = {CH_MIC: "your mic side", CH_SYSTEM: "the remote audio"}
+    active = [
+        ch for ch in (CH_MIC, CH_SYSTEM)
+        if activity_fraction(chan_samples[ch], rate) >= 0.005
+    ]
+    for ch in (CH_MIC, CH_SYSTEM):
+        if ch not in active:
+            log.info(
+                f"Channel {ch} ({'mic' if ch == CH_MIC else 'system'}) "
+                "is silent — skipping its transcription"
+            )
+
+    # Kick off diarization of the active channels in the background while the
+    # (GPU-bound) transcription works through them.
+    turns = {CH_MIC: None, CH_SYSTEM: None}
+
+    def _diarize_all():
+        for ch in active:
+            turns[ch] = diarizer.diarize(chan_samples[ch])
+
+    diar_thread = None
+    if diarizer is not None and active:
+        diar_thread = threading.Thread(target=_diarize_all, daemon=True)
+        diar_thread.start()
+
+    per_channel: dict = {CH_MIC: [], CH_SYSTEM: []}
     tmp_files = []
     try:
-        for channel, samples in ((CH_MIC, mic), (CH_SYSTEM, system)):
-            if activity_fraction(samples, rate) < 0.005:
-                log.info(
-                    f"Channel {channel} ({'mic' if channel == CH_MIC else 'system'}) "
-                    "is silent — skipping its transcription"
-                )
-                per_channel[channel] = []
-                continue
+        for i, channel in enumerate(active):
+            note(f"Transcribing {chan_names[channel]} ({i + 1}/{len(active)})…")
             tmp = wav_path.with_name(f".{wav_path.stem}.ch{channel}.wav")
-            write_channel_wav(samples, rate, tmp)
+            write_channel_wav(chan_samples[channel], rate, tmp)
             tmp_files.append(tmp)
             sentences = transcribe_sentences(tmp)
             per_channel[channel] = _parse_sentences(sentences)
@@ -457,12 +494,14 @@ def build_labeled_transcript(
     if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
         return None
 
-    turns = {CH_MIC: None, CH_SYSTEM: None}
-    if diarizer is not None:
-        if per_channel[CH_MIC]:
-            turns[CH_MIC] = diarizer.diarize(mic)
-        if per_channel[CH_SYSTEM]:
-            turns[CH_SYSTEM] = diarizer.diarize(system)
+    if diar_thread is not None:
+        note("Identifying speakers…")
+        diar_thread.join()
+    # Channels whose transcription came back empty don't need their turns.
+    for ch in (CH_MIC, CH_SYSTEM):
+        if not per_channel[ch]:
+            turns[ch] = None
+    note("Building the transcript…")
 
     # Tag each sentence with (channel, cluster), merge both channels by time,
     # then number labels by order of first appearance.

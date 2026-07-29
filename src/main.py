@@ -637,7 +637,17 @@ class AloeScribe:
         # never applies a chunk offset, unlike batch), so transcripts built
         # from it showed [00:00]-ish times for hour-long meetings — and the
         # speaker labeler windows audio by timestamp, so it needs real ones.
-        # The final transcript therefore ALWAYS comes from a batch pass.
+        # The final transcript therefore ALWAYS comes from a batch pass. The
+        # streamed text is still complete, though — pin it to the processing
+        # screen as a draft so the wait never looks like a hang.
+        try:
+            draft = ""
+            if hasattr(self.transcriber, "stream_text"):
+                draft = self.transcriber.stream_text()
+            if draft and hasattr(self.tray, "processing_draft"):
+                self.tray.processing_draft(draft)
+        except Exception:
+            pass
         try:
             self.transcriber.stream_close()
         except Exception:
@@ -667,6 +677,28 @@ class AloeScribe:
             source = (
                 "aloe-scribe-windows" if sys.platform == "win32" else "aloe-scribe-mac"
             )
+
+            def progress(msg: str):
+                try:
+                    if hasattr(self.tray, "processing_status"):
+                        self.tray.processing_status(msg)
+                except Exception:
+                    pass
+
+            # Set expectations up front: N minutes of audio takes roughly
+            # N/12 minutes to label (per-channel STT with concurrent
+            # diarization, measured on Apple Silicon).
+            try:
+                channels = _wav_header_channels(wav_path)
+                dur_min = wav_path.stat().st_size / (32000 * channels) / 60
+                est = max(1, round(dur_min / 12))
+                progress(
+                    f"{round(dur_min)} min recording — labeling usually "
+                    f"takes about {est} min"
+                )
+            except Exception:
+                pass
+
             return (
                 speakers.build_labeled_transcript(
                     wav_path,
@@ -675,6 +707,7 @@ class AloeScribe:
                     title,
                     when,
                     source,
+                    progress=progress,
                 )
                 or ""
             )

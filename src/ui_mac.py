@@ -195,6 +195,8 @@ class _Signals(QObject):
     live_preview_status = pyqtSignal(str)
     show_error = pyqtSignal(str)
     prompt_speaker_names = pyqtSignal(object)  # (quotes, apply_callback)
+    processing_status = pyqtSignal(str)
+    processing_draft = pyqtSignal(str)
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +256,8 @@ class AloeScribeWindow(QMainWindow):
         self._signals.live_preview_status.connect(self._on_live_preview_status)
         self._signals.show_error.connect(self._on_show_error)
         self._signals.prompt_speaker_names.connect(self._on_prompt_speaker_names)
+        self._signals.processing_status.connect(self._on_processing_status)
+        self._signals.processing_draft.connect(self._on_processing_draft)
 
         # Timer
         self._timer = QTimer(self)
@@ -831,6 +835,7 @@ class AloeScribeWindow(QMainWindow):
         self._timer.stop()
         self._stop_processing_timer()
         self._clear_content()
+        self._processing_draft_box = None  # widgets were just torn down
 
         stopped = QLabel("Recording stopped")
         stopped.setObjectName("stateLabel")
@@ -847,6 +852,15 @@ class AloeScribeWindow(QMainWindow):
         label.setObjectName("meetingTime")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(label)
+
+        # Live stage line ("Transcribing the remote audio (2/2)…") so a
+        # multi-minute labeling pass never reads as a frozen app.
+        self._processing_status_label = QLabel("Preparing…")
+        self._processing_status_label.setObjectName("stateLabel")
+        self._processing_status_label.setStyleSheet("font-size: 10px;")
+        self._processing_status_label.setWordWrap(True)
+        self._processing_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._content_layout.addWidget(self._processing_status_label)
 
         hint = QLabel("Long recordings may take several minutes.")
         hint.setObjectName("stateLabel")
@@ -948,6 +962,45 @@ class AloeScribeWindow(QMainWindow):
 
     def prompt_speaker_names(self, quotes, apply_callback):
         self._signals.prompt_speaker_names.emit((quotes, apply_callback))
+
+    def processing_status(self, msg):
+        self._signals.processing_status.emit(msg)
+
+    def _on_processing_status(self, msg: str):
+        label = getattr(self, "_processing_status_label", None)
+        if label is not None and self._state == "processing":
+            try:
+                label.setText(msg)
+            except RuntimeError:
+                pass  # label was torn down by a state change
+
+    def processing_draft(self, text):
+        self._signals.processing_draft.emit(text)
+
+    def _on_processing_draft(self, text: str):
+        """Show the streamed draft transcript on the processing screen. The
+        live stream already holds the full text of the call at Stop, so the
+        user sees their meeting immediately while labels and real timestamps
+        finalize in the background."""
+        if self._state != "processing" or not text:
+            return
+        box = getattr(self, "_processing_draft_box", None)
+        try:
+            if box is None:
+                caption = QLabel("Draft transcript (speaker labels being finalized):")
+                caption.setObjectName("deviceLabel")
+                self._content_layout.addWidget(caption)
+                box = QTextEdit()
+                box.setReadOnly(True)
+                box.setMinimumHeight(140)
+                self._content_layout.addWidget(box)
+                self._processing_draft_box = box
+                # Grow the fixed-size window to fit the draft box.
+                self.setFixedSize(self.width(), self.height() + 190)
+            box.setPlainText(text)
+            box.verticalScrollBar().setValue(box.verticalScrollBar().maximum())
+        except RuntimeError:
+            self._processing_draft_box = None
 
     def _on_prompt_speaker_names(self, payload):
         """Post-recording dialog: one row per identified speaker with their
@@ -1319,3 +1372,11 @@ class AloeScribeApp:
     def prompt_speaker_names(self, quotes, apply_callback):
         if self._window:
             self._window.prompt_speaker_names(quotes, apply_callback)
+
+    def processing_status(self, msg):
+        if self._window:
+            self._window.processing_status(msg)
+
+    def processing_draft(self, text):
+        if self._window:
+            self._window.processing_draft(text)
