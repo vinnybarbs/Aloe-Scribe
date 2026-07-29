@@ -30,7 +30,11 @@ Diarization models (~36 MB total) are downloaded once from the sherpa-onnx
 GitHub releases and cached under ~/.cache/aloe-scribe/diarization/.
 """
 
+import json
 import logging
+import os
+import subprocess
+import sys
 import tarfile
 import urllib.request
 import wave
@@ -191,6 +195,48 @@ def _download(url: str, dst: Path) -> bool:
         return False
 
 
+# Runs in a SEPARATE python process: sherpa-onnx's process() holds the GIL
+# for its entire (minutes-long) run, which freezes the Qt main thread — the
+# beach-ball-after-stop bug. A subprocess has its own GIL, so the app stays
+# responsive. Keep this self-contained (stdlib + numpy + sherpa_onnx only).
+_DIARIZE_WORKER = r"""
+import json, sys, wave
+import numpy as np
+import sherpa_onnx
+
+wav, seg, emb, thr = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+with wave.open(wav, "rb") as w:
+    raw = w.readframes(w.getnframes())
+samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+    segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+        pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=seg)),
+    embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=emb),
+    clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=thr),
+    min_duration_on=0.3, min_duration_off=0.5)
+sd = sherpa_onnx.OfflineSpeakerDiarization(config)
+segs = sd.process(samples).sort_by_start_time()
+print(json.dumps([[s.start, s.end, int(s.speaker)] for s in segs]))
+"""
+
+
+def _worker_python() -> Optional[str]:
+    """Interpreter for the diarization subprocess. The Mac app already
+    depends on the project venv at runtime (mlx & friends load from it), so
+    it is the natural host. None means no usable interpreter (e.g. the
+    frozen Windows .exe) — callers fall back to in-process diarization."""
+    if os.environ.get("ALOE_SCRIBE_VENV"):
+        p = Path(os.environ["ALOE_SCRIBE_VENV"]) / "bin" / "python3"
+        if p.exists():
+            return str(p)
+    p = Path.home() / "aloe-scribe" / ".venv" / "bin" / "python3"
+    if p.exists():
+        return str(p)
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return None
+
+
 class Diarizer:
     """
     Offline speaker diarization via sherpa-onnx. All failure modes (package
@@ -198,8 +244,15 @@ class Diarizer:
     callers then fall back to channel-only labels.
     """
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    # Calibrated on real meetings (see below) — configurable via
+    # [transcriber] diarize_threshold. Lower = more, smaller speaker
+    # clusters; higher = fewer, merged ones.
+    DEFAULT_THRESHOLD = 1.0
+
+    def __init__(self, cache_dir: Optional[Path] = None,
+                 threshold: Optional[float] = None):
         self.cache_dir = cache_dir or default_cache_dir()
+        self.threshold = float(threshold or self.DEFAULT_THRESHOLD)
         self._sd = None
         self._failed = False
 
@@ -259,7 +312,7 @@ class Diarizer:
                 # 1.0 recovered the true count. Higher merges real speakers
                 # (1.25 collapsed everyone into one).
                 clustering=sherpa_onnx.FastClusteringConfig(
-                    num_clusters=-1, threshold=1.0
+                    num_clusters=-1, threshold=self.threshold
                 ),
                 min_duration_on=0.3,
                 min_duration_off=0.5,
@@ -276,6 +329,10 @@ class Diarizer:
         samples: float32 mono 16 kHz numpy array.
         Returns [(start_sec, end_sec, cluster_id), ...] sorted by start, or
         None if diarization is unavailable/failed.
+
+        WARNING: runs in-process and holds the GIL for the duration — only
+        use where UI responsiveness doesn't matter (tests, CLI fallback).
+        Prefer diarize_file() from the app.
         """
         if not self._ensure_ready():
             return None
@@ -284,6 +341,50 @@ class Diarizer:
             return [(s.start, s.end, int(s.speaker)) for s in result]
         except Exception as e:
             log.warning(f"Diarization failed: {e}")
+            return None
+
+    def diarize_file(self, wav_path: Path) -> Optional[list]:
+        """Diarize a mono 16 kHz WAV in a SUBPROCESS so the multi-minute
+        sherpa call cannot hold this process's GIL (which froze the app's
+        UI). Falls back to in-process when no interpreter is available or
+        the subprocess fails. Same return shape as diarize()."""
+        exe = _worker_python()
+        if exe is not None:
+            paths = self._model_paths()
+            if paths is None:
+                self._failed = True
+                return None
+            seg, emb = paths
+            try:
+                proc = subprocess.run(
+                    [exe, "-c", _DIARIZE_WORKER, str(wav_path), str(seg),
+                     str(emb), str(self.threshold)],
+                    capture_output=True,
+                    text=True,
+                    timeout=1800,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    return [
+                        (float(a), float(b), int(c))
+                        for a, b, c in json.loads(proc.stdout)
+                    ]
+                log.warning(
+                    f"Diarization subprocess failed (rc={proc.returncode}): "
+                    f"{(proc.stderr or '').strip()[-300:]}"
+                )
+            except Exception as e:
+                log.warning(f"Diarization subprocess error: {e}")
+            # fall through to in-process
+
+        try:
+            import numpy as np
+
+            with wave.open(str(wav_path), "rb") as w:
+                raw = w.readframes(w.getnframes())
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            return self.diarize(samples)
+        except Exception as e:
+            log.warning(f"Diarization fallback failed: {e}")
             return None
 
 
@@ -460,43 +561,48 @@ def build_labeled_transcript(
                 "is silent — skipping its transcription"
             )
 
-    # Kick off diarization of the active channels in the background while the
-    # (GPU-bound) transcription works through them.
+    # Write the per-channel mono WAVs up front: the STT loop reads them, and
+    # so does the diarization SUBPROCESS (out-of-process because sherpa-onnx
+    # holds the GIL for its whole run — in a thread it froze the app UI).
+    tmp_wavs = {
+        ch: wav_path.with_name(f".{wav_path.stem}.ch{ch}.wav") for ch in active
+    }
     turns = {CH_MIC: None, CH_SYSTEM: None}
-
-    def _diarize_all():
-        for ch in active:
-            turns[ch] = diarizer.diarize(chan_samples[ch])
-
-    diar_thread = None
-    if diarizer is not None and active:
-        diar_thread = threading.Thread(target=_diarize_all, daemon=True)
-        diar_thread.start()
-
     per_channel: dict = {CH_MIC: [], CH_SYSTEM: []}
-    tmp_files = []
     try:
+        for ch in active:
+            write_channel_wav(chan_samples[ch], rate, tmp_wavs[ch])
+
+        def _diarize_all():
+            for ch in active:
+                turns[ch] = diarizer.diarize_file(tmp_wavs[ch])
+
+        diar_thread = None
+        if diarizer is not None and active:
+            diar_thread = threading.Thread(target=_diarize_all, daemon=True)
+            diar_thread.start()
+
         for i, channel in enumerate(active):
             note(f"Transcribing {chan_names[channel]} ({i + 1}/{len(active)})…")
-            tmp = wav_path.with_name(f".{wav_path.stem}.ch{channel}.wav")
-            write_channel_wav(chan_samples[channel], rate, tmp)
-            tmp_files.append(tmp)
-            sentences = transcribe_sentences(tmp)
+            sentences = transcribe_sentences(tmp_wavs[channel])
             per_channel[channel] = _parse_sentences(sentences)
+
+        per_channel[CH_MIC] = dedupe_echo(
+            per_channel[CH_MIC], per_channel[CH_SYSTEM]
+        )
+        if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
+            return None
+
+        if diar_thread is not None:
+            note("Identifying speakers…")
+            diar_thread.join()
     finally:
-        for t in tmp_files:
+        for t in tmp_wavs.values():
             try:
                 t.unlink()
             except Exception:
                 pass
 
-    per_channel[CH_MIC] = dedupe_echo(per_channel[CH_MIC], per_channel[CH_SYSTEM])
-    if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
-        return None
-
-    if diar_thread is not None:
-        note("Identifying speakers…")
-        diar_thread.join()
     # Channels whose transcription came back empty don't need their turns.
     for ch in (CH_MIC, CH_SYSTEM):
         if not per_channel[ch]:
@@ -569,9 +675,10 @@ _LINE_RE = r"^\[(\d+):(\d\d)\] ([A-Za-z][\w .'-]*?): (.*)$"
 
 def speaker_quotes(md_text: str) -> list:
     """From a labeled transcript, one entry per speaker in order of first
-    appearance: (label, representative_quote, line_count). The quote is the
-    speaker's longest line (most identifiable), trimmed for display. Used by
-    the post-recording "who was speaking?" prompt."""
+    appearance: (label, quotes, line_count). `quotes` is up to three of the
+    speaker's lines — their first, their longest, and their last, in
+    chronological order — because a single line is often not enough to
+    recognize who was talking. Used by the "who was speaking?" prompt."""
     import re
 
     by_label: dict = {}
@@ -585,13 +692,19 @@ def speaker_quotes(md_text: str) -> list:
             by_label[label] = []
             order.append(label)
         by_label[label].append(text)
+
+    def trim(q: str) -> str:
+        return q if len(q) <= 110 else q[:107].rsplit(" ", 1)[0] + "…"
+
     out = []
     for label in order:
         lines = by_label[label]
-        quote = max(lines, key=len)
-        if len(quote) > 140:
-            quote = quote[:137].rsplit(" ", 1)[0] + "…"
-        out.append((label, quote, len(lines)))
+        longest = max(lines, key=len)
+        picks = []
+        for q in (lines[0], longest, lines[-1]):  # chronological already
+            if q not in picks:
+                picks.append(q)
+        out.append((label, [trim(q) for q in picks], len(lines)))
     return out
 
 
@@ -619,6 +732,14 @@ def apply_speaker_names(md_text: str, mapping: dict) -> str:
     }
     if not mapping:
         return md_text
+
+    # Merge case-insensitively: "Brandon Smith" and "Brandon SMith" are the
+    # same person mistyped, not two speakers. First-typed casing wins.
+    canonical: dict = {}
+    for label in sorted(mapping):
+        key = mapping[label].lower()
+        canonical.setdefault(key, mapping[label])
+    mapping = {label: canonical[name.lower()] for label, name in mapping.items()}
 
     out_lines = []
     final_order = []

@@ -8,6 +8,7 @@ Single-instance: re-launching activates the existing window.
 import logging
 import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
@@ -212,6 +213,7 @@ class AloeScribeWindow(QMainWindow):
         on_device_change: Callable = None,
         on_output_dir_change: Callable = None,
         on_transcribe_file: Callable = None,
+        on_name_speakers: Callable = None,
         live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
@@ -225,6 +227,7 @@ class AloeScribeWindow(QMainWindow):
         self._on_device_change = on_device_change
         self._on_output_dir_change = on_output_dir_change
         self._on_transcribe_file = on_transcribe_file
+        self._on_name_speakers = on_name_speakers
         self._live_preview_enabled = live_preview
         self._selected_mic = current_mic
         self._selected_system = current_system
@@ -913,6 +916,18 @@ class AloeScribeWindow(QMainWindow):
         btn_row.addWidget(open_btn)
         self._content_layout.addLayout(btn_row)
 
+        # Re-open the speaker-naming dialog for this transcript — for names
+        # skipped the first time, or fixing a mistyped one.
+        if self._on_name_speakers and hasattr(output_path, "name"):
+            name_btn = QPushButton("Name speakers…")
+            name_btn.setObjectName("btnSkip")
+            name_btn.clicked.connect(
+                lambda _=False, p=output_path: threading.Thread(
+                    target=lambda: self._on_name_speakers(p), daemon=True
+                ).start()
+            )
+            self._content_layout.addWidget(name_btn)
+
         self._update_status("● Done", "statusDone")
 
         # If we were waiting to quit after transcription, do that now.
@@ -960,8 +975,10 @@ class AloeScribeWindow(QMainWindow):
         self._render_idle()
         QMessageBox.warning(self, "Aloe Scribe", msg)
 
-    def prompt_speaker_names(self, quotes, apply_callback):
-        self._signals.prompt_speaker_names.emit((quotes, apply_callback))
+    def prompt_speaker_names(self, quotes, transcript_text, apply_callback):
+        self._signals.prompt_speaker_names.emit(
+            (quotes, transcript_text, apply_callback)
+        )
 
     def processing_status(self, msg):
         self._signals.processing_status.emit(msg)
@@ -1003,11 +1020,14 @@ class AloeScribeWindow(QMainWindow):
             self._processing_draft_box = None
 
     def _on_prompt_speaker_names(self, payload):
-        """Post-recording dialog: one row per identified speaker with their
-        most identifiable quote and a name box. Typed names replace labels in
+        """Post-recording dialog: one row per identified speaker with a few
+        of their quotes and a name box, plus the FULL transcript below —
+        quotes alone are often not enough to recognize a voice, the
+        surrounding conversation usually is. Typed names replace labels in
         the saved transcript; blanks keep the label; the same name in two
-        boxes merges those speakers. Skipping changes nothing."""
-        quotes, apply_callback = payload
+        boxes merges those speakers (case-insensitive). Skipping changes
+        nothing."""
+        quotes, transcript_text, apply_callback = payload
         if not quotes:
             return
 
@@ -1019,7 +1039,7 @@ class AloeScribeWindow(QMainWindow):
             f"{len(quotes)} unique speaker{'s' if len(quotes) != 1 else ''} "
             "identified in this recording. Type a name to replace each label "
             "(leave blank to keep it). The same name in two boxes merges "
-            "those speakers."
+            "those speakers. The full transcript is below for context."
         )
         head.setWordWrap(True)
         layout.addWidget(head)
@@ -1027,10 +1047,14 @@ class AloeScribeWindow(QMainWindow):
         rows_host = QWidget()
         rows_layout = QVBoxLayout(rows_host)
         edits = {}
-        for label, quote, count in quotes:
+        for label, speaker_quotes, count in quotes:
+            # Older callers may pass a single quote string.
+            if isinstance(speaker_quotes, str):
+                speaker_quotes = [speaker_quotes]
+            quote_html = "<br>".join(f"<i>“{q}”</i>" for q in speaker_quotes)
             who = QLabel(
-                f"<b>{label}</b> ({count} line{'s' if count != 1 else ''}) — "
-                f"<i>“{quote}”</i>"
+                f"<b>{label}</b> ({count} line{'s' if count != 1 else ''})"
+                f"<br>{quote_html}"
             )
             who.setWordWrap(True)
             rows_layout.addWidget(who)
@@ -1042,8 +1066,15 @@ class AloeScribeWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(rows_host)
-        scroll.setMinimumSize(460, min(420, 90 * len(quotes) + 40))
-        layout.addWidget(scroll)
+        scroll.setMinimumSize(560, min(340, 110 * len(quotes) + 40))
+        layout.addWidget(scroll, 2)
+
+        if transcript_text:
+            body = QTextEdit()
+            body.setReadOnly(True)
+            body.setPlainText(transcript_text)
+            body.setMinimumHeight(220)
+            layout.addWidget(body, 3)
 
         buttons = QDialogButtonBox()
         save = buttons.addButton(
@@ -1163,6 +1194,7 @@ class AloeScribeApp:
     def __init__(self, on_start_recording, on_stop_recording, on_quit,
                  list_sources=None, on_device_change=None,
                  on_output_dir_change=None, on_transcribe_file=None,
+                 on_name_speakers=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1172,6 +1204,7 @@ class AloeScribeApp:
         self._on_device_change = on_device_change
         self._on_output_dir_change = on_output_dir_change
         self._on_transcribe_file = on_transcribe_file
+        self._on_name_speakers = on_name_speakers
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -1211,6 +1244,7 @@ class AloeScribeApp:
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._on_transcribe_file,
+            on_name_speakers=self._on_name_speakers,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,
@@ -1369,9 +1403,9 @@ class AloeScribeApp:
         if self._window:
             self._window.show_error(msg)
 
-    def prompt_speaker_names(self, quotes, apply_callback):
+    def prompt_speaker_names(self, quotes, transcript_text, apply_callback):
         if self._window:
-            self._window.prompt_speaker_names(quotes, apply_callback)
+            self._window.prompt_speaker_names(quotes, transcript_text, apply_callback)
 
     def processing_status(self, msg):
         if self._window:

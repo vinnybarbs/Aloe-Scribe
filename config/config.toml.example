@@ -43,10 +43,17 @@ parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 # back to one per side. Set false for the old unlabeled mixed-mono behavior.
 speaker_labels = true
 
-# After a labeled transcript is saved, show a small dialog asking who each
-# identified speaker was (with a quote from them). Typed names replace the
-# M*/R* labels in the transcript; skipping keeps the labels.
+# After a labeled transcript is saved, show a dialog asking who each
+# identified speaker was (quotes from them plus the full transcript for
+# context). Typed names replace the M*/R* labels in the transcript;
+# skipping keeps the labels.
 prompt_speaker_names = true
+
+# Diarization clustering threshold. Lower splits voices more aggressively
+# (over-splits are easy to fix — type the same name for both in the naming
+# dialog); higher merges more (under-splits are NOT fixable afterward).
+# Leave unset for the calibrated default (1.0).
+#diarize_threshold = 1.0
 
 [whisper]
 # Path to your whisper.cpp binary

@@ -239,6 +239,9 @@ class AloeScribe:
             config.get("transcriber", {}).get("speaker_labels", True)
         )
         self._diarizer = None  # built lazily on first labeled finalize
+        self._diarize_threshold = float(
+            config.get("transcriber", {}).get("diarize_threshold", 0) or 0
+        ) or None
         # After a labeled transcript is saved, ask who each speaker was and
         # rewrite the labels with the typed names.
         self._prompt_names = bool(
@@ -306,6 +309,9 @@ class AloeScribe:
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._transcribe_existing_file,
+            on_name_speakers=lambda p: self._maybe_prompt_speaker_names(
+                Path(p), interactive=True
+            ),
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -392,8 +398,18 @@ class AloeScribe:
         timestamp = self._recording_start.strftime("%Y-%m-%d-%H%M")
         slug = meeting.slug()
         self._recording_path = self.output_dir / f"{timestamp}-{slug}.wav"
-        # Transcript shares the WAV's timestamp so live streaming can write to it.
         self._md_path = self.output_dir / f"{timestamp}-{slug}.md"
+        # Streaming checkpoints go to a LOCAL drafts dir, not the (possibly
+        # cloud-synced) output dir — repeated checkpoint writes raced the
+        # final overwrite under OneDrive sync and produced conflict copies.
+        self._draft_path = (
+            Path.home() / ".cache" / "aloe-scribe" / "drafts"
+            / f"{timestamp}-{slug}.md"
+        )
+        try:
+            self._draft_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self._draft_path = self._md_path  # fall back to the old behavior
 
         ok = self.recorder.start(self._recording_path)
         if ok:
@@ -412,7 +428,7 @@ class AloeScribe:
                 args=(self._watchdog_stop,),
                 daemon=True,
             ).start()
-            self._start_streaming(self._recording_path, self._md_path)
+            self._start_streaming(self._recording_path, self._draft_path)
         else:
             log.error("Failed to start recording")
             self.tray.set_idle()
@@ -673,7 +689,9 @@ class AloeScribe:
             if _wav_header_channels(wav_path) != 2:
                 return ""
             if self._diarizer is None:
-                self._diarizer = speakers.Diarizer()
+                self._diarizer = speakers.Diarizer(
+                    threshold=self._diarize_threshold
+                )
             source = (
                 "aloe-scribe-windows" if sys.platform == "win32" else "aloe-scribe-mac"
             )
@@ -715,17 +733,27 @@ class AloeScribe:
             log.warning(f"Speaker labeling failed — keeping unlabeled transcript: {e}")
             return ""
 
-    def _maybe_prompt_speaker_names(self, md_path: Path):
+    def _maybe_prompt_speaker_names(self, md_path: Path, interactive: bool = False):
         """After a labeled transcript is saved, ask the user who each speaker
-        was (one representative quote per label) and rewrite the file with
-        the typed names. Best-effort and fully skippable."""
-        if not self._prompt_names or not hasattr(self.tray, "prompt_speaker_names"):
+        was (a few quotes per label, full transcript alongside) and rewrite
+        the file with the typed names. Best-effort and fully skippable.
+        `interactive` marks an explicit user request (the Done screen's
+        "Name speakers…" button) — failures get a visible dialog then."""
+        if not hasattr(self.tray, "prompt_speaker_names"):
+            return
+        if not self._prompt_names and not interactive:
             return
         try:
             import speakers
 
-            quotes = speakers.speaker_quotes(md_path.read_text(encoding="utf-8"))
+            md_path = Path(md_path)
+            text = md_path.read_text(encoding="utf-8")
+            quotes = speakers.speaker_quotes(text)
             if not quotes:
+                if interactive:
+                    self._show_error(
+                        f"{md_path.name} has no speaker labels to name."
+                    )
                 return
 
             def apply(mapping: dict):
@@ -740,7 +768,7 @@ class AloeScribe:
                 except Exception as e:
                     log.error(f"Applying speaker names failed: {e}")
 
-            self.tray.prompt_speaker_names(quotes, apply)
+            self.tray.prompt_speaker_names(quotes, text, apply)
         except Exception as e:
             log.debug(f"Speaker naming prompt skipped: {e}")
 
@@ -816,6 +844,14 @@ class AloeScribe:
                 pass
 
         if result:
+            # The final transcript exists — the local streaming draft served
+            # its crash-insurance purpose.
+            draft = getattr(self, "_draft_path", None)
+            if draft and draft != md_path:
+                try:
+                    draft.unlink()
+                except Exception:
+                    pass
             # Only delete the WAV once we actually have the transcript (and
             # not even then when keep_wav is set).
             if not self._keep_wav:

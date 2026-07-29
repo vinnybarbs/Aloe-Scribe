@@ -785,7 +785,10 @@ class AloeScribeApp(Gtk.Application):
 
     def __init__(self, on_start_recording, on_stop_recording, on_quit,
                  list_sources=None, on_device_change=None,
-                 current_mic="", current_system=""):
+                 current_mic="", current_system="", **_unsupported):
+        # Newer UI capabilities (file picker, speaker naming, live preview)
+        # are macOS/Windows only — absorb their kwargs so the shared
+        # constructor call keeps working on Linux.
         super().__init__(application_id="com.aloescribe.app")
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording

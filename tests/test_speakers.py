@@ -150,8 +150,13 @@ def test_speaker_naming():
     ])
     quotes = speakers.speaker_quotes(md)
     assert [q[0] for q in quotes] == ["M1", "R1", "R2"]
-    assert quotes[0][1].startswith("a much longer mic line")
+    # M1: first + longest (also last) → two distinct quotes, chronological
+    assert quotes[0][1] == [
+        "short",
+        "a much longer mic line that should be the chosen quote",
+    ]
     assert quotes[0][2] == 2  # M1 spoke twice
+    assert quotes[2][1] == ["brief"]  # single-line speaker → one quote
 
     named = speakers.apply_speaker_names(md, {"M1": "Vincent", "R1": "Priya"})
     assert "[00:01] Vincent: short" in named
