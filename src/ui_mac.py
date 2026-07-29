@@ -30,6 +30,10 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QTextEdit,
+    QDialog,
+    QDialogButtonBox,
+    QLineEdit,
+    QScrollArea,
 )
 
 from audio_meter import make_avfoundation_meter, make_sck_meter
@@ -190,6 +194,7 @@ class _Signals(QObject):
     live_preview_clear = pyqtSignal()
     live_preview_status = pyqtSignal(str)
     show_error = pyqtSignal(str)
+    prompt_speaker_names = pyqtSignal(object)  # (quotes, apply_callback)
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +253,7 @@ class AloeScribeWindow(QMainWindow):
         self._signals.live_preview_clear.connect(self._on_live_preview_clear)
         self._signals.live_preview_status.connect(self._on_live_preview_status)
         self._signals.show_error.connect(self._on_show_error)
+        self._signals.prompt_speaker_names.connect(self._on_prompt_speaker_names)
 
         # Timer
         self._timer = QTimer(self)
@@ -940,6 +946,75 @@ class AloeScribeWindow(QMainWindow):
         self._render_idle()
         QMessageBox.warning(self, "Aloe Scribe", msg)
 
+    def prompt_speaker_names(self, quotes, apply_callback):
+        self._signals.prompt_speaker_names.emit((quotes, apply_callback))
+
+    def _on_prompt_speaker_names(self, payload):
+        """Post-recording dialog: one row per identified speaker with their
+        most identifiable quote and a name box. Typed names replace labels in
+        the saved transcript; blanks keep the label; the same name in two
+        boxes merges those speakers. Skipping changes nothing."""
+        quotes, apply_callback = payload
+        if not quotes:
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Aloe Scribe — Who was speaking?")
+        layout = QVBoxLayout(dlg)
+
+        head = QLabel(
+            f"{len(quotes)} unique speaker{'s' if len(quotes) != 1 else ''} "
+            "identified in this recording. Type a name to replace each label "
+            "(leave blank to keep it). The same name in two boxes merges "
+            "those speakers."
+        )
+        head.setWordWrap(True)
+        layout.addWidget(head)
+
+        rows_host = QWidget()
+        rows_layout = QVBoxLayout(rows_host)
+        edits = {}
+        for label, quote, count in quotes:
+            who = QLabel(
+                f"<b>{label}</b> ({count} line{'s' if count != 1 else ''}) — "
+                f"<i>“{quote}”</i>"
+            )
+            who.setWordWrap(True)
+            rows_layout.addWidget(who)
+            edit = QLineEdit()
+            edit.setPlaceholderText("Name")
+            rows_layout.addWidget(edit)
+            edits[label] = edit
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(rows_host)
+        scroll.setMinimumSize(460, min(420, 90 * len(quotes) + 40))
+        layout.addWidget(scroll)
+
+        buttons = QDialogButtonBox()
+        save = buttons.addButton(
+            "Save names", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.addButton("Skip", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        save.setDefault(True)
+        layout.addWidget(buttons)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            mapping = {
+                label: edit.text().strip()
+                for label, edit in edits.items()
+                if edit.text().strip()
+            }
+            if mapping:
+                import threading
+
+                threading.Thread(
+                    target=lambda: apply_callback(mapping), daemon=True
+                ).start()
+
     # ------------------------------------------------------------------ #
     # Handlers                                                             #
     # ------------------------------------------------------------------ #
@@ -1240,3 +1315,7 @@ class AloeScribeApp:
     def show_error(self, msg):
         if self._window:
             self._window.show_error(msg)
+
+    def prompt_speaker_names(self, quotes, apply_callback):
+        if self._window:
+            self._window.prompt_speaker_names(quotes, apply_callback)

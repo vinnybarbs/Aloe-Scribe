@@ -132,6 +132,47 @@ def test_echo_dedupe():
     print("ok: echo dedupe")
 
 
+def test_speaker_naming():
+    """Quote extraction and name rewriting for the post-recording prompt."""
+    md = "\n".join([
+        "---",
+        'title: "T"',
+        "speakers: [M1, R1, R2]",
+        'speaker_key: "M* = mic side"',
+        "---",
+        "",
+        "[00:01] M1: short",
+        "[00:05] R1: this is the longest most identifiable line from R one",
+        "[00:09] M1: a much longer mic line that should be the chosen quote",
+        "[00:12] R2: brief",
+        "[00:15] R1: shorter line",
+        "",
+    ])
+    quotes = speakers.speaker_quotes(md)
+    assert [q[0] for q in quotes] == ["M1", "R1", "R2"]
+    assert quotes[0][1].startswith("a much longer mic line")
+    assert quotes[0][2] == 2  # M1 spoke twice
+
+    named = speakers.apply_speaker_names(md, {"M1": "Vincent", "R1": "Priya"})
+    assert "[00:01] Vincent: short" in named
+    assert "[00:05] Priya: this is the longest" in named
+    assert "[00:12] R2: brief" in named  # unnamed keeps label
+    assert "speakers: [Vincent, Priya, R2]" in named
+    assert 'speaker_channels: "Vincent=M1; Priya=R1"' in named
+
+    # Same name on two labels merges them in the speakers list.
+    merged = speakers.apply_speaker_names(md, {"R1": "Sam", "R2": "Sam"})
+    assert "speakers: [M1, Sam]" in merged
+    assert "[00:12] Sam: brief" in merged
+
+    # Hostile input is sanitized; empty mapping is a no-op.
+    weird = speakers.apply_speaker_names(md, {"M1": '  Bob, [x]: "q"  '})
+    assert "[00:01] Bob x q: short" in weird
+    assert speakers.apply_speaker_names(md, {}) == md
+    assert speakers.apply_speaker_names(md, {"M1": "   "}) == md
+    print("ok: speaker naming")
+
+
 def test_mono_passthrough(tmp: Path):
     """Mono WAVs are not split recordings — labeling must decline."""
     from datetime import datetime
@@ -184,6 +225,7 @@ def main():
         test_per_channel_labels(tmp)
         test_silent_channel_skipped(tmp)
         test_echo_dedupe()
+        test_speaker_naming()
         test_mono_passthrough(tmp)
         test_downmix(tmp)
         test_diarizer_optional(tmp)

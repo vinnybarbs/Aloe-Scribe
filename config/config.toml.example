@@ -43,6 +43,11 @@ parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 # back to one per side. Set false for the old unlabeled mixed-mono behavior.
 speaker_labels = true
 
+# After a labeled transcript is saved, show a small dialog asking who each
+# identified speaker was (with a quote from them). Typed names replace the
+# M*/R* labels in the transcript; skipping keeps the labels.
+prompt_speaker_names = true
+
 [whisper]
 # Path to your whisper.cpp binary
 # Install: https://github.com/ggerganov/whisper.cpp

@@ -239,6 +239,11 @@ class AloeScribe:
             config.get("transcriber", {}).get("speaker_labels", True)
         )
         self._diarizer = None  # built lazily on first labeled finalize
+        # After a labeled transcript is saved, ask who each speaker was and
+        # rewrite the labels with the typed names.
+        self._prompt_names = bool(
+            config.get("transcriber", {}).get("prompt_speaker_names", True)
+        )
 
         # Initialise components
         self.recorder = Recorder(
@@ -677,6 +682,35 @@ class AloeScribe:
             log.warning(f"Speaker labeling failed — keeping unlabeled transcript: {e}")
             return ""
 
+    def _maybe_prompt_speaker_names(self, md_path: Path):
+        """After a labeled transcript is saved, ask the user who each speaker
+        was (one representative quote per label) and rewrite the file with
+        the typed names. Best-effort and fully skippable."""
+        if not self._prompt_names or not hasattr(self.tray, "prompt_speaker_names"):
+            return
+        try:
+            import speakers
+
+            quotes = speakers.speaker_quotes(md_path.read_text(encoding="utf-8"))
+            if not quotes:
+                return
+
+            def apply(mapping: dict):
+                try:
+                    current = md_path.read_text(encoding="utf-8")
+                    renamed = speakers.apply_speaker_names(current, mapping)
+                    if renamed != current:
+                        md_path.write_text(renamed, encoding="utf-8")
+                        log.info(f"Speaker names applied: {md_path.name}")
+                        # Re-sync so the named version replaces the labeled one.
+                        self.syncer.enqueue(md_path)
+                except Exception as e:
+                    log.error(f"Applying speaker names failed: {e}")
+
+            self.tray.prompt_speaker_names(quotes, apply)
+        except Exception as e:
+            log.debug(f"Speaker naming prompt skipped: {e}")
+
     def _mono_stt_input(self, wav_path: Path):
         """Return (stt_input, tmp_mono). For stereo split recordings stt_input
         is a hidden temp mono downmix (tmp_mono set — caller deletes it); mono
@@ -750,6 +784,8 @@ class AloeScribe:
                     pass
             self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
+            if md:  # speaker-labeled — ask who the speakers were
+                self._maybe_prompt_speaker_names(md_path)
         else:
             # Keep the WAV so the recording can be recovered. Surface the exact
             # command to re-run it.
@@ -840,6 +876,8 @@ class AloeScribe:
         if result:
             self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
+            if md:  # speaker-labeled — ask who the speakers were
+                self._maybe_prompt_speaker_names(md_path)
         else:
             log.error(f"Could not transcribe {wav_path}")
             self.tray.set_idle()

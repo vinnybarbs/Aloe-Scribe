@@ -319,6 +319,8 @@ Accuracy expectations: the M-versus-R side of a line is reliable because it come
 
 The labels are deliberately anonymous. The downstream summary agent maps them to names using the matched calendar event and conversational context ("thanks, Priya" said by M1 right after R2 finishes is a strong hint). The `speaker_key` header field explains the scheme to the agent so it does not have to guess.
 
+You can also name speakers yourself: right after a labeled transcript is saved, the app shows "N unique speakers identified" with a representative quote from each and a name box. Typed names replace the labels in the saved transcript (a `speaker_channels` header line keeps the original side for the agent), typing the same name in two boxes merges those speakers, and Skip keeps the anonymous labels. Disable with `prompt_speaker_names = false` under `[transcriber]`.
+
 Set `speaker_labels = false` under `[transcriber]` in config.toml to restore the old behavior (mixed mono recording, no labels). Recordings with a single source (mic-only or system-only) stay mono and unlabeled either way.
 
 ## Project structure

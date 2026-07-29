@@ -493,6 +493,101 @@ def speaker_frontmatter_extras(labeled: list, diarized: bool) -> list:
     return lines
 
 
+_LINE_RE = r"^\[(\d+):(\d\d)\] ([A-Za-z][\w .'-]*?): (.*)$"
+
+
+def speaker_quotes(md_text: str) -> list:
+    """From a labeled transcript, one entry per speaker in order of first
+    appearance: (label, representative_quote, line_count). The quote is the
+    speaker's longest line (most identifiable), trimmed for display. Used by
+    the post-recording "who was speaking?" prompt."""
+    import re
+
+    by_label: dict = {}
+    order = []
+    for line in md_text.splitlines():
+        m = re.match(_LINE_RE, line)
+        if not m:
+            continue
+        label, text = m.group(3), m.group(4).strip()
+        if label not in by_label:
+            by_label[label] = []
+            order.append(label)
+        by_label[label].append(text)
+    out = []
+    for label in order:
+        lines = by_label[label]
+        quote = max(lines, key=len)
+        if len(quote) > 140:
+            quote = quote[:137].rsplit(" ", 1)[0] + "…"
+        out.append((label, quote, len(lines)))
+    return out
+
+
+def _sanitize_name(name: str) -> str:
+    """Names go into YAML lists and transcript lines — keep them plain."""
+    cleaned = "".join(c for c in name if c not in "[]{}:,\"'\n\t")
+    return " ".join(cleaned.split())[:40]
+
+
+def apply_speaker_names(md_text: str, mapping: dict) -> str:
+    """Rewrite a labeled transcript with human names.
+
+    `mapping`: {label: name}. Blank/missing names keep their label. The same
+    name on two labels merges those speakers. The frontmatter `speakers:`
+    list is rewritten to the final names, and a `speaker_channels:` line
+    records which side each name was heard on so the downstream agent keeps
+    the local/remote distinction.
+    """
+    import re
+
+    mapping = {
+        label: _sanitize_name(name)
+        for label, name in (mapping or {}).items()
+        if name and _sanitize_name(name)
+    }
+    if not mapping:
+        return md_text
+
+    out_lines = []
+    final_order = []
+    channel_notes = []
+    seen = set()
+    for line in md_text.splitlines():
+        m = re.match(_LINE_RE, line)
+        if m:
+            label = m.group(3)
+            name = mapping.get(label, label)
+            if name not in seen:
+                seen.add(name)
+                final_order.append(name)
+                if label != name:
+                    channel_notes.append(f"{name}={label}")
+            line = f"[{m.group(1)}:{m.group(2)}] {name}: {m.group(4)}"
+        out_lines.append(line)
+
+    text = "\n".join(out_lines)
+    if final_order:
+        text = re.sub(
+            r"^speakers: \[[^\]]*\]$",
+            f"speakers: [{', '.join(final_order)}]",
+            text,
+            count=1,
+            flags=re.M,
+        )
+    if channel_notes:
+        text = re.sub(
+            r"^(speakers: \[[^\]]*\])$",
+            r"\1" + f"\nspeaker_channels: \"{'; '.join(channel_notes)}\"",
+            text,
+            count=1,
+            flags=re.M,
+        )
+    if md_text.endswith("\n") and not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
 def build_labeled_body(labeled: list) -> str:
     """Transcript body: one '[MM:SS] LABEL: text' line per sentence."""
     lines = []
