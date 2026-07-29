@@ -737,6 +737,15 @@ class AloeScribe:
             self.output_dir / f"{wav_path.stem}.md"
         )
 
+        # A recording that survived a hard app kill has a valid audio body but
+        # an unfinalized (zero-size) header — patch it before reading.
+        try:
+            import speakers
+
+            speakers.repair_wav_header(wav_path)
+        except Exception:
+            pass
+
         # Preferred path for split recordings: per-channel transcription with
         # speaker labels. Falls back to a plain transcribe of the mono
         # downmix. Guard against the backend raising (e.g. a Parakeet Metal

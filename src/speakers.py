@@ -68,6 +68,36 @@ def default_cache_dir() -> Path:
 # WAV helpers
 # ---------------------------------------------------------------------------
 
+def repair_wav_header(path: Path) -> bool:
+    """Fix a WAV whose RIFF/data size fields are still zero because the
+    writer was killed before finalizing (a hard app kill takes the capture
+    helper with it). The audio bytes themselves are intact — only 8 header
+    bytes need patching, computed from the real file size. In-place,
+    idempotent, refuses anything that isn't the exact canonical 44-byte
+    layout our recorders write. Returns True if a repair was made."""
+    try:
+        size = path.stat().st_size
+        if size <= 44:
+            return False
+        with open(path, "r+b") as f:
+            h = f.read(44)
+            if len(h) < 44 or h[:4] != b"RIFF" or h[36:40] != b"data":
+                return False
+            if int.from_bytes(h[40:44], "little") != 0:
+                return False  # header already finalized
+            f.seek(4)
+            f.write((size - 8).to_bytes(4, "little"))
+            f.seek(40)
+            f.write((size - 44).to_bytes(4, "little"))
+        log.warning(
+            f"Repaired unfinalized WAV header (writer was killed mid-recording): {path.name}"
+        )
+        return True
+    except Exception as e:
+        log.debug(f"repair_wav_header({path}): {e}")
+        return False
+
+
 def wav_channels(path: Path) -> int:
     """Channel count of a WAV file (0 on failure)."""
     try:
@@ -86,6 +116,7 @@ def load_split_channels(path: Path):
     """
     import numpy as np
 
+    repair_wav_header(path)
     try:
         with wave.open(str(path), "rb") as w:
             if w.getnchannels() != 2 or w.getsampwidth() != 2:
@@ -111,6 +142,7 @@ def downmix_to_mono_wav(src: Path, dst: Path) -> Optional[Path]:
     """
     import numpy as np
 
+    repair_wav_header(src)
     try:
         with wave.open(str(src), "rb") as w:
             channels = w.getnchannels()
