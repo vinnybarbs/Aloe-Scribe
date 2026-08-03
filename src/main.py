@@ -239,6 +239,9 @@ class AloeScribe:
             config.get("transcriber", {}).get("speaker_labels", True)
         )
         self._diarizer = None  # built lazily on first labeled finalize
+        # Transcription jobs currently running — the UI's quit path asks
+        # before killing them with the interpreter.
+        self._jobs_inflight = 0
         self._diarize_threshold = float(
             config.get("transcriber", {}).get("diarize_threshold", 0) or 0
         ) or None
@@ -312,6 +315,7 @@ class AloeScribe:
             on_name_speakers=lambda p: self._maybe_prompt_speaker_names(
                 Path(p), interactive=True
             ),
+            processing_check=lambda: self._jobs_inflight > 0,
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -803,6 +807,13 @@ class AloeScribe:
         return wav_path, None
 
     def _transcribe_and_sync(self, wav_path: Path, job: dict = None):
+        self._jobs_inflight += 1
+        try:
+            self._transcribe_and_sync_inner(wav_path, job)
+        finally:
+            self._jobs_inflight -= 1
+
+    def _transcribe_and_sync_inner(self, wav_path: Path, job: dict = None):
         # `job` is the identity snapshot taken at Stop. Callers without one
         # (recovery paths) fall back to the live fields.
         job = job or {}
@@ -930,6 +941,13 @@ class AloeScribe:
             pass
 
     def _transcribe_existing_file(self, wav_path):
+        self._jobs_inflight += 1
+        try:
+            self._transcribe_existing_file_inner(wav_path)
+        finally:
+            self._jobs_inflight -= 1
+
+    def _transcribe_existing_file_inner(self, wav_path):
         """Transcribe an audio file the user picked in the UI.
 
         Mirrors the live recording path: infers the meeting title/date from the

@@ -1231,7 +1231,7 @@ class AloeScribeApp:
     def __init__(self, on_start_recording, on_stop_recording, on_quit,
                  list_sources=None, on_device_change=None,
                  on_output_dir_change=None, on_transcribe_file=None,
-                 on_name_speakers=None,
+                 on_name_speakers=None, processing_check=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1242,6 +1242,7 @@ class AloeScribeApp:
         self._on_output_dir_change = on_output_dir_change
         self._on_transcribe_file = on_transcribe_file
         self._on_name_speakers = on_name_speakers
+        self._processing_check = processing_check
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -1384,6 +1385,27 @@ class AloeScribeApp:
             self._window._quit_after_transcribe = True
             self._window._on_stop()
             return
+        # Quitting mid-transcription kills the job with it (the interpreter
+        # tears down the inference executor: "cannot schedule new futures
+        # after shutdown"). Make it a conscious choice — this has silently
+        # eaten a meeting's transcript before.
+        try:
+            if self._processing_check and self._processing_check() and self._window:
+                resp = QMessageBox.question(
+                    self._window,
+                    "Aloe Scribe",
+                    "A transcript is still being created and quitting now "
+                    "cancels it.\n\nThe recording is kept either way — you "
+                    "can transcribe it later with “Transcribe a file…”.\n\n"
+                    "Quit anyway?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if resp != QMessageBox.StandardButton.Yes:
+                    return
+        except Exception:
+            pass
         self._on_quit()
         # NSStatusItem cleans itself up when the process exits; no explicit
         # hide() is needed (and the legacy QSystemTrayIcon .hide() call would
