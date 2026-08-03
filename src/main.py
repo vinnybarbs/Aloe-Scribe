@@ -647,6 +647,17 @@ class AloeScribe:
         if getattr(self, "_stream_thread", None) is not None:
             self._stream_thread.join(timeout=4)
             self._stream_thread = None
+        # Snapshot this recording's identity NOW — the user can start the next
+        # recording while this one is still transcribing, which repoints all
+        # the self._* fields at the new meeting.
+        job = {
+            "md_path": getattr(self, "_md_path", None),
+            "title": (
+                self._current_meeting.title if self._current_meeting else "Recording"
+            ),
+            "when": getattr(self, "_recording_start", None) or datetime.now(),
+            "draft_path": getattr(self, "_draft_path", None),
+        }
         wav_path = self.recorder.stop()
         # The stream is preview + crash-checkpoint only. Its sentence
         # timestamps are window-relative (parakeet-mlx's streaming decoder
@@ -672,7 +683,10 @@ class AloeScribe:
             self.tray.set_idle()
             return
         threading.Thread(
-            target=self._transcribe_and_sync, args=(wav_path,), daemon=True
+            target=self._transcribe_and_sync,
+            args=(wav_path,),
+            kwargs={"job": job},
+            daemon=True,
         ).start()
 
     def _labeled_markdown(self, wav_path: Path, title: str, when: datetime) -> str:
@@ -788,14 +802,21 @@ class AloeScribe:
             log.warning(f"Downmix failed, feeding stereo WAV to STT: {e}")
         return wav_path, None
 
-    def _transcribe_and_sync(self, wav_path: Path):
+    def _transcribe_and_sync(self, wav_path: Path, job: dict = None):
+        # `job` is the identity snapshot taken at Stop. Callers without one
+        # (recovery paths) fall back to the live fields.
+        job = job or {}
         meeting = self._current_meeting
-        # Use the path + start time fixed at record start (the live stream may
-        # already have checkpointed a partial transcript here; this clean pass
-        # overwrites it).
-        when = getattr(self, "_recording_start", None) or datetime.now()
-        md_path = getattr(self, "_md_path", None) or (
-            self.output_dir / f"{wav_path.stem}.md"
+        title = job.get("title") or (meeting.title if meeting else "Recording")
+        when = (
+            job.get("when")
+            or getattr(self, "_recording_start", None)
+            or datetime.now()
+        )
+        md_path = (
+            job.get("md_path")
+            or getattr(self, "_md_path", None)
+            or (self.output_dir / f"{wav_path.stem}.md")
         )
 
         # A recording that survived a hard app kill has a valid audio body but
@@ -812,7 +833,6 @@ class AloeScribe:
         # downmix. Guard against the backend raising (e.g. a Parakeet Metal
         # error) — an uncaught exception here would kill this daemon thread
         # silently, leaving the WAV orphaned with no transcript and no notice.
-        title = meeting.title if meeting else "Recording"
         result = None
         md = self._labeled_markdown(wav_path, title, when)
         if md:
@@ -843,10 +863,15 @@ class AloeScribe:
             except Exception:
                 pass
 
+        # If the user already started the NEXT recording while this one was
+        # transcribing, its screen owns the window — announce this transcript
+        # with a notification instead of hijacking the UI state.
+        recording_again = self.recorder.is_recording()
+
         if result:
             # The final transcript exists — the local streaming draft served
             # its crash-insurance purpose.
-            draft = getattr(self, "_draft_path", None)
+            draft = job.get("draft_path")
             if draft and draft != md_path:
                 try:
                     draft.unlink()
@@ -860,7 +885,17 @@ class AloeScribe:
                     log.debug(f"Deleted WAV: {wav_path.name}")
                 except Exception:
                     pass
-            self.tray.set_done(md_path)
+            if recording_again:
+                try:
+                    import notifications
+
+                    notifications.send(
+                        "Aloe Scribe", f"Transcript ready: {md_path.name}"
+                    )
+                except Exception:
+                    pass
+            else:
+                self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
             if md:  # speaker-labeled — ask who the speakers were
                 self._maybe_prompt_speaker_names(md_path)
@@ -871,9 +906,15 @@ class AloeScribe:
                 f"Transcription failed — WAV kept for recovery: {wav_path}\n"
                 f"  Recover with: python3 scripts/transcribe_wav.py {wav_path}"
             )
-            self.tray.set_idle()
+            if not recording_again:
+                self.tray.set_idle()
+            self._show_error(
+                f"Transcription of {wav_path.name} failed — the audio is "
+                "kept. Use “Transcribe a file…” to retry it."
+            )
 
-        self._current_meeting = None
+        if not recording_again:
+            self._current_meeting = None
 
     # ------------------------------------------------------------------ #
     # Transcribe an existing audio file chosen in the UI file picker       #

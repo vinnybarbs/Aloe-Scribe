@@ -874,6 +874,19 @@ class AloeScribeWindow(QMainWindow):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._content_layout.addWidget(hint)
 
+        # Back-to-back meetings: recording does not contend with
+        # transcription, so the next call can start now. This transcript
+        # keeps processing in the background and announces itself with a
+        # notification when it lands.
+        next_btn = QPushButton("Start next recording")
+        next_btn.setObjectName("btnStart")
+        next_btn.clicked.connect(self._on_manual_start)
+        # Same 600 ms debounce as the idle screen — this button appears at
+        # the same coordinates the user just clicked Stop on.
+        next_btn.setEnabled(False)
+        QTimer.singleShot(600, lambda b=next_btn: b.setEnabled(True))
+        self._content_layout.addWidget(next_btn)
+
         self._processing_timer_label = QLabel("00:00")
         self._processing_timer_label.setObjectName("timer")
         self._processing_timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
