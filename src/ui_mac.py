@@ -550,8 +550,14 @@ class AloeScribeWindow(QMainWindow):
         mic_label.setObjectName("deviceLabel")
         self._content_layout.addWidget(mic_label)
 
+        # No auto-detect: it guessed wrong too often (recording a meeting on
+        # the built-in mic while a headset sat unused). The dropdown starts on
+        # a placeholder that Start refuses, UNLESS the saved mic is actually
+        # present right now — then it is preselected, so the everyday
+        # same-desk case stays zero-click while a changed environment (other
+        # office, missing headset) forces a conscious choice.
         mic_combo = QComboBox()
-        mic_combo.addItem("Auto-detect", "")
+        mic_combo.addItem("Select microphone…", "")
         active_mic_idx = 0
         for i, (dev_id, display) in enumerate(mics):
             mic_combo.addItem(display, dev_id)
@@ -562,6 +568,10 @@ class AloeScribeWindow(QMainWindow):
             lambda idx, c=mic_combo: self._on_mic_changed(c)
         )
         self._content_layout.addWidget(mic_combo)
+        # Start's gate reads the visible selection: placeholder = no start.
+        # (The saved config value is deliberately kept, so plugging the usual
+        # headset back in preselects it again next time.)
+        self._mic_combo = mic_combo
 
         # System audio dropdown — explicit on/off rather than the legacy
         # "Auto-detect / BlackHole" device picker. SCK always captures the
@@ -1123,6 +1133,20 @@ class AloeScribeWindow(QMainWindow):
         self.on_start_recording(meeting)
 
     def _on_manual_start(self):
+        # Force an explicit mic choice — auto-detect recorded meetings on the
+        # wrong microphone when the usual headset wasn't around.
+        combo = getattr(self, "_mic_combo", None)
+        try:
+            if combo is not None and not combo.currentData():
+                QMessageBox.information(
+                    self,
+                    "Aloe Scribe",
+                    "Choose your microphone first — the dropdown is still on "
+                    "“Select microphone…”.",
+                )
+                return
+        except RuntimeError:
+            pass  # combo from a previous screen was torn down; proceed
         try:
             from meeting import Meeting
             manual = Meeting(title="Manual Recording")

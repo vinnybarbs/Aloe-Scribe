@@ -210,8 +210,9 @@ Edit `config/config.toml`:
 
 ```toml
 [audio]
-# Leave blank to auto-detect (recommended). The macOS UI dropdowns
-# persist your selection back to this file.
+# The mic is chosen in the app (dropdown starts on "Select microphone…" and
+# Start requires a choice). The selection persists here and is preselected
+# whenever that device is connected.
 mic_source = ""
 system_source = ""
 
