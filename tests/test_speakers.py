@@ -132,6 +132,48 @@ def test_echo_dedupe():
     print("ok: echo dedupe")
 
 
+def test_tag_reconciliation():
+    """Live tags name clusters; same name merges over-split clusters."""
+    # (start, end, text, channel, cluster)
+    tagged = [
+        (0.0, 4.0, "hello", speakers.CH_SYSTEM, 0),
+        (5.0, 9.0, "hi there", speakers.CH_MIC, 0),
+        (10.0, 14.0, "more remote", speakers.CH_SYSTEM, 0),
+        (15.0, 19.0, "over-split same voice", speakers.CH_SYSTEM, 1),
+        (20.0, 24.0, "never tagged", speakers.CH_SYSTEM, 2),
+    ]
+    tags = [
+        (2.0, "Brandon"),   # inside cluster S0 speech
+        (6.5, "Vince"),     # inside mic speech
+        (17.0, "brandon"),  # over-split cluster S1, case-insensitive
+        (12.5, "Brandon"),  # second vote for S0
+    ]
+    names = speakers._names_from_tags(tagged, tags)
+    assert names[(speakers.CH_SYSTEM, 0)] == "Brandon"
+    assert names[(speakers.CH_SYSTEM, 1)] == "Brandon"  # merged by name
+    assert names[(speakers.CH_MIC, 0)] == "Vince"
+    assert (speakers.CH_SYSTEM, 2) not in names  # untagged stays anonymous
+
+    # Trailing tolerance: tag typed just after the sentence ended still binds.
+    late = speakers._names_from_tags(tagged, [(26.0, "Darren")])
+    assert late[(speakers.CH_SYSTEM, 2)] == "Darren"
+    # A tag in dead air far from any speech binds nothing.
+    assert speakers._names_from_tags(tagged, [(60.0, "Ghost")]) == {}
+    print("ok: tag reconciliation")
+
+
+def test_notes_section():
+    notes = [(65.0, "Follow up with Alex on pricing"), (200, "  "), (10, "intro")]
+    md = speakers.build_notes_section(notes)
+    assert "## Notes" in md
+    assert "[01:05] Follow up with Alex on pricing" in md
+    assert "[00:10] intro" in md
+    assert speakers.build_notes_section([]) == ""
+    assert speakers.build_notes_section(None) == ""
+    assert speakers.build_notes_section([(5, "   ")]) == ""
+    print("ok: notes section")
+
+
 def test_speaker_naming():
     """Quote extraction and name rewriting for the post-recording prompt."""
     md = "\n".join([
@@ -230,6 +272,8 @@ def main():
         test_per_channel_labels(tmp)
         test_silent_channel_skipped(tmp)
         test_echo_dedupe()
+        test_tag_reconciliation()
+        test_notes_section()
         test_speaker_naming()
         test_mono_passthrough(tmp)
         test_downmix(tmp)

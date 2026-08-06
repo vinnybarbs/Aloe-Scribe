@@ -35,6 +35,9 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QLineEdit,
     QScrollArea,
+    QSplitter,
+    QPlainTextEdit,
+    QInputDialog,
 )
 
 from audio_meter import make_avfoundation_meter, make_sck_meter
@@ -198,6 +201,263 @@ class _Signals(QObject):
     prompt_speaker_names = pyqtSignal(object)  # (quotes, apply_callback)
     processing_status = pyqtSignal(str)
     processing_draft = pyqtSignal(str)
+    notes_final = pyqtSignal(object)  # (path, transcript_text)
+
+
+# ---------------------------------------------------------------------------
+# Meeting notes window — live notepad + speaker tags + transcript pane
+# ---------------------------------------------------------------------------
+class NotesWindow(QWidget):
+    """Side panel for the meeting itself.
+
+    Top pane: the transcript. During recording it mirrors the live stream
+    (read-only, and it only autoscrolls while you're already at the bottom —
+    scroll up to re-read and it stays put). Once the final transcript is
+    ready it becomes an editable view of the saved file, with one chip
+    button per speaker for click-to-rename.
+
+    Bottom pane: a note entry line plus the running notes log, and a
+    speaker-tag row. Tagging a name while that person is talking is the
+    naming mechanism: the pipeline assigns each diarized cluster the name
+    whose tags land inside its speech. Tags beat post-call guessing because
+    you could hear the speaker when you tagged them.
+
+    State flows out through two callbacks: on_meta_changed(tags, notes_text)
+    fires (debounced) on every change so the app can crash-persist it, and
+    on_save(path, text) writes the edited final transcript.
+    """
+
+    def __init__(self, on_meta_changed=None, on_save=None):
+        super().__init__()
+        self._on_meta_changed = on_meta_changed
+        self._on_save = on_save
+        self._meeting_start: Optional[datetime] = None
+        self._tags: list = []          # [(elapsed_seconds, name), ...]
+        self._final_path: Optional[Path] = None
+        self._known_names: list = []
+
+        self.setWindowTitle("Aloe Scribe — Meeting Notes")
+        self.resize(520, 640)
+
+        layout = QVBoxLayout(self)
+        split = QSplitter(Qt.Orientation.Vertical)
+        layout.addWidget(split)
+
+        # --- top: transcript ---
+        top = QWidget()
+        top_l = QVBoxLayout(top)
+        self._transcript_caption = QLabel("Live transcript")
+        self._transcript_caption.setObjectName("deviceLabel")
+        top_l.addWidget(self._transcript_caption)
+        self._chips_row = QHBoxLayout()
+        top_l.addLayout(self._chips_row)
+        self._transcript = QPlainTextEdit()
+        self._transcript.setReadOnly(True)
+        self._transcript.setPlaceholderText(
+            "The transcript streams here while recording."
+        )
+        top_l.addWidget(self._transcript)
+        save_row = QHBoxLayout()
+        self._save_btn = QPushButton("Save transcript edits")
+        self._save_btn.setObjectName("btnStart")
+        self._save_btn.setVisible(False)
+        self._save_btn.clicked.connect(self._save_final)
+        save_row.addStretch(1)
+        save_row.addWidget(self._save_btn)
+        top_l.addLayout(save_row)
+        split.addWidget(top)
+
+        # --- bottom: tags + notes ---
+        bottom = QWidget()
+        bot_l = QVBoxLayout(bottom)
+
+        tag_caption = QLabel("Who is talking? Tag them while you hear them")
+        tag_caption.setObjectName("deviceLabel")
+        bot_l.addWidget(tag_caption)
+        tag_row = QHBoxLayout()
+        self._tag_edit = QLineEdit()
+        self._tag_edit.setPlaceholderText("Speaker name")
+        self._tag_edit.returnPressed.connect(self._tag_current)
+        tag_row.addWidget(self._tag_edit, 1)
+        tag_btn = QPushButton("Tag")
+        tag_btn.setObjectName("btnSkip")
+        tag_btn.clicked.connect(self._tag_current)
+        tag_row.addWidget(tag_btn, 0)
+        bot_l.addLayout(tag_row)
+        self._tag_chips = QHBoxLayout()
+        bot_l.addLayout(self._tag_chips)
+
+        notes_caption = QLabel("Notes (Enter adds a timestamped line)")
+        notes_caption.setObjectName("deviceLabel")
+        bot_l.addWidget(notes_caption)
+        self._note_entry = QLineEdit()
+        self._note_entry.setPlaceholderText("Type a note, press Enter")
+        self._note_entry.returnPressed.connect(self._add_note)
+        bot_l.addWidget(self._note_entry)
+        self._notes_log = QPlainTextEdit()
+        self._notes_log.setPlaceholderText(
+            "Notes collect here — edit freely, they are saved into the "
+            "transcript's Notes section."
+        )
+        self._notes_log.textChanged.connect(self._schedule_meta_push)
+        bot_l.addWidget(self._notes_log)
+        split.addWidget(bottom)
+        split.setSizes([380, 260])
+
+        # Debounce for crash-persistence pushes.
+        self._meta_timer = QTimer(self)
+        self._meta_timer.setSingleShot(True)
+        self._meta_timer.setInterval(2000)
+        self._meta_timer.timeout.connect(self._push_meta)
+
+    # ---- meeting lifecycle -------------------------------------------------
+
+    def start_meeting(self, started_at: datetime):
+        self._meeting_start = started_at
+        self._final_path = None
+        self._tags = []
+        self._known_names = []
+        self._clear_chips()
+        self._transcript.setReadOnly(True)
+        self._transcript.setPlainText("")
+        self._transcript_caption.setText("Live transcript")
+        self._save_btn.setVisible(False)
+        self._notes_log.setPlainText("")
+
+    def _elapsed(self) -> float:
+        if self._meeting_start is None:
+            return 0.0
+        return max(
+            0.0, (datetime.now() - self._meeting_start).total_seconds()
+        )
+
+    def update_live(self, text: str):
+        """Refresh the streaming transcript without stealing the scrollbar:
+        autoscroll only while the user is already pinned to the bottom."""
+        if self._final_path is not None:
+            return
+        bar = self._transcript.verticalScrollBar()
+        pinned = bar.value() >= bar.maximum() - 4
+        self._transcript.setPlainText(text)
+        if pinned:
+            bar.setValue(bar.maximum())
+
+    def show_final(self, path, text: str):
+        """Swap the pane to the saved transcript: editable, with one rename
+        chip per speaker label."""
+        self._final_path = Path(path)
+        self._transcript_caption.setText(
+            f"Final transcript — {self._final_path.name} (editable)"
+        )
+        self._transcript.setReadOnly(False)
+        self._transcript.setPlainText(text)
+        self._transcript.verticalScrollBar().setValue(0)
+        self._save_btn.setVisible(True)
+        self._rebuild_chips(text)
+
+    # ---- speaker tags ------------------------------------------------------
+
+    def _tag_current(self):
+        name = self._tag_edit.text().strip()
+        if not name:
+            return
+        self._record_tag(name)
+        self._tag_edit.clear()
+
+    def _record_tag(self, name: str):
+        t = self._elapsed()
+        self._tags.append((t, name))
+        if name.lower() not in [n.lower() for n in self._known_names]:
+            self._known_names.append(name)
+            chip = QPushButton(name)
+            chip.setObjectName("btnSkip")
+            chip.clicked.connect(lambda _=False, n=name: self._record_tag(n))
+            self._tag_chips.addWidget(chip)
+        m, s = divmod(int(t), 60)
+        self._notes_log.appendPlainText(f"[{m:02d}:{s:02d}] ▸ {name} is speaking")
+        self._schedule_meta_push()
+
+    # ---- notes -------------------------------------------------------------
+
+    def _add_note(self):
+        text = self._note_entry.text().strip()
+        if not text:
+            return
+        m, s = divmod(int(self._elapsed()), 60)
+        self._notes_log.appendPlainText(f"[{m:02d}:{s:02d}] {text}")
+        self._note_entry.clear()
+        self._schedule_meta_push()
+
+    def _schedule_meta_push(self):
+        self._meta_timer.start()
+
+    def _push_meta(self):
+        if self._on_meta_changed:
+            try:
+                self._on_meta_changed(
+                    list(self._tags), self._notes_log.toPlainText()
+                )
+            except Exception:
+                pass
+
+    # ---- final-transcript editing -----------------------------------------
+
+    def _clear_chips(self):
+        for row in (self._chips_row, self._tag_chips):
+            while row.count():
+                item = row.takeAt(0)
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
+
+    def _rebuild_chips(self, text: str):
+        while self._chips_row.count():
+            item = self._chips_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        try:
+            import speakers
+
+            labels = [q[0] for q in speakers.speaker_quotes(text)]
+        except Exception:
+            labels = []
+        for label in labels[:12]:
+            chip = QPushButton(label)
+            chip.setObjectName("btnSkip")
+            chip.setToolTip(f"Rename {label} everywhere in this transcript")
+            chip.clicked.connect(lambda _=False, l=label: self._rename_label(l))
+            self._chips_row.addWidget(chip)
+        self._chips_row.addStretch(1)
+
+    def _rename_label(self, label: str):
+        name, ok = QInputDialog.getText(
+            self, "Rename speaker", f"Who is {label}?"
+        )
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        try:
+            import speakers
+
+            renamed = speakers.apply_speaker_names(
+                self._transcript.toPlainText(), {label: name}
+            )
+            self._transcript.setPlainText(renamed)
+            self._rebuild_chips(renamed)
+        except Exception as e:
+            QMessageBox.warning(self, "Aloe Scribe", f"Rename failed: {e}")
+
+    def _save_final(self):
+        if self._final_path is None or not self._on_save:
+            return
+        try:
+            self._on_save(self._final_path, self._transcript.toPlainText())
+            self._transcript_caption.setText(
+                f"Final transcript — {self._final_path.name} (saved)"
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Aloe Scribe", f"Save failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +474,8 @@ class AloeScribeWindow(QMainWindow):
         on_output_dir_change: Callable = None,
         on_transcribe_file: Callable = None,
         on_name_speakers: Callable = None,
+        on_meta_changed: Callable = None,
+        on_save_transcript: Callable = None,
         live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
@@ -228,6 +490,9 @@ class AloeScribeWindow(QMainWindow):
         self._on_output_dir_change = on_output_dir_change
         self._on_transcribe_file = on_transcribe_file
         self._on_name_speakers = on_name_speakers
+        self._on_meta_changed = on_meta_changed
+        self._on_save_transcript = on_save_transcript
+        self._notes_window: Optional[NotesWindow] = None
         self._live_preview_enabled = live_preview
         self._selected_mic = current_mic
         self._selected_system = current_system
@@ -261,6 +526,7 @@ class AloeScribeWindow(QMainWindow):
         self._signals.prompt_speaker_names.connect(self._on_prompt_speaker_names)
         self._signals.processing_status.connect(self._on_processing_status)
         self._signals.processing_draft.connect(self._on_processing_draft)
+        self._signals.notes_final.connect(self._on_notes_final)
 
         # Timer
         self._timer = QTimer(self)
@@ -757,6 +1023,11 @@ class AloeScribeWindow(QMainWindow):
         self._current_meeting = meeting
         self._clear_content()
 
+        # The notes window is the naming mechanism (tag speakers while you
+        # can hear them), so it opens with every recording. Closing it keeps
+        # it closed for this meeting; the next recording opens it again.
+        self._show_notes(start_meeting=True)
+
         state = QLabel("Recording")
         state.setObjectName("stateLabel")
         state.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -795,7 +1066,12 @@ class AloeScribeWindow(QMainWindow):
         stop.clicked.connect(self._on_stop)
         self._content_layout.addWidget(stop)
 
-        self.setFixedSize(344, 600 if self._live_preview_enabled else 485)
+        notes_btn = QPushButton("Notes && speaker tags")
+        notes_btn.setObjectName("btnSkip")
+        notes_btn.clicked.connect(lambda: self._show_notes())
+        self._content_layout.addWidget(notes_btn)
+
+        self.setFixedSize(344, 640 if self._live_preview_enabled else 525)
         self._update_status("● Recording", "statusRecord")
         self._timer_seconds = 0
         self._timer.start()
@@ -814,7 +1090,12 @@ class AloeScribeWindow(QMainWindow):
 
     def _on_live_preview_set(self, text: str):
         # Streaming sends the full, growing transcript each tick — replace and
-        # keep the newest line in view.
+        # keep the newest line in view. The notes window gets the same feed
+        # but with scroll-position-respecting updates.
+        try:
+            self.notes_update_live(text)
+        except Exception:
+            pass
         box = self._live_preview_box
         if box is None:
             return
@@ -1016,6 +1297,31 @@ class AloeScribeWindow(QMainWindow):
 
     def processing_draft(self, text):
         self._signals.processing_draft.emit(text)
+
+    def notes_show_final(self, path, text):
+        self._signals.notes_final.emit((path, text))
+
+    def _on_notes_final(self, payload):
+        # Only refresh a notes window the user actually has open — never
+        # conjure one at transcript-completion time.
+        if self._notes_window is not None and self._notes_window.isVisible():
+            path, text = payload
+            self._notes_window.show_final(path, text)
+
+    def _show_notes(self, start_meeting: bool = False):
+        if self._notes_window is None:
+            self._notes_window = NotesWindow(
+                on_meta_changed=self._on_meta_changed,
+                on_save=self._on_save_transcript,
+            )
+        if start_meeting:
+            self._notes_window.start_meeting(datetime.now())
+        self._notes_window.show()
+        self._notes_window.raise_()
+
+    def notes_update_live(self, text: str):
+        if self._notes_window is not None and self._notes_window.isVisible():
+            self._notes_window.update_live(text)
 
     def _on_processing_draft(self, text: str):
         """Show the streamed draft transcript on the processing screen. The
@@ -1232,6 +1538,7 @@ class AloeScribeApp:
                  list_sources=None, on_device_change=None,
                  on_output_dir_change=None, on_transcribe_file=None,
                  on_name_speakers=None, processing_check=None,
+                 on_meta_changed=None, on_save_transcript=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1243,6 +1550,8 @@ class AloeScribeApp:
         self._on_transcribe_file = on_transcribe_file
         self._on_name_speakers = on_name_speakers
         self._processing_check = processing_check
+        self._on_meta_changed = on_meta_changed
+        self._on_save_transcript = on_save_transcript
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -1283,6 +1592,8 @@ class AloeScribeApp:
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._on_transcribe_file,
             on_name_speakers=self._on_name_speakers,
+            on_meta_changed=self._on_meta_changed,
+            on_save_transcript=self._on_save_transcript,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,
@@ -1473,3 +1784,7 @@ class AloeScribeApp:
     def processing_draft(self, text):
         if self._window:
             self._window.processing_draft(text)
+
+    def notes_show_final(self, path, text):
+        if self._window:
+            self._window.notes_show_final(path, text)

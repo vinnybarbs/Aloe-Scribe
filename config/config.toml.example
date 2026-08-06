@@ -45,11 +45,10 @@ parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 # back to one per side. Set false for the old unlabeled mixed-mono behavior.
 speaker_labels = true
 
-# After a labeled transcript is saved, show a dialog asking who each
-# identified speaker was (quotes from them plus the full transcript for
-# context). Typed names replace the M*/R* labels in the transcript;
-# skipping keeps the labels.
-prompt_speaker_names = true
+# Speaker naming happens live in the Meeting Notes window: tag a name while
+# that person is talking and the transcript labels become names
+# automatically. The Done screen's "Name speakers…" button remains for
+# after-the-fact fixes.
 
 # Diarization clustering threshold. Lower splits voices more aggressively
 # (over-splits are easy to fix — type the same name for both in the naming

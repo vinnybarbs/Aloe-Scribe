@@ -510,6 +510,8 @@ def build_labeled_transcript(
     when,
     source: str,
     progress=None,
+    tags: Optional[list] = None,
+    notes: Optional[list] = None,
 ) -> Optional[str]:
     """
     Full speaker-labeled transcript from a split (stereo) recording.
@@ -522,9 +524,21 @@ def build_labeled_transcript(
 
     `transcribe_sentences`: callable(Path) -> list of {'start','end','text'}
     (the backend's batch API). `progress`: optional callable(str) receiving
-    human-readable stage updates for the UI. Returns the markdown string, or
-    None when the WAV is not a split recording or nothing was transcribed —
-    callers fall back to the plain downmix path.
+    human-readable stage updates for the UI.
+
+    `tags`: [(seconds_from_start, name), ...] captured live in the meeting
+    panel ("Brandon is talking right now"). Clusters are named by the tags
+    that land inside their speech, which beats any post-hoc guessing: the
+    person doing the naming could HEAR the speaker at tag time. Two clusters
+    tagged with the same name merge automatically, healing diarization
+    over-splits. Untagged clusters keep anonymous M/R labels.
+
+    `notes`: [(seconds_from_start, text), ...] typed during the meeting —
+    appended as a timestamped Notes section for the summary agent.
+
+    Returns the markdown string, or None when the WAV is not a split
+    recording or nothing was transcribed — callers fall back to the plain
+    downmix path.
 
     Speaker identification (CPU, onnxruntime) runs on a background thread
     CONCURRENTLY with transcription (GPU on the Mac), so the wall-clock cost
@@ -622,14 +636,23 @@ def build_labeled_transcript(
             tagged.append((start, end, text, channel, 0 if cluster is None else cluster))
     tagged.sort(key=lambda t: t[0])
 
+    # Live speaker tags → cluster names. A tag votes for the cluster whose
+    # sentence contains its timestamp (small tolerance: people tag a beat
+    # after someone starts talking, and turn boundaries wobble).
+    cluster_names = _names_from_tags(tagged, tags)
+
     label_map: dict = {}
     counts = {CH_MIC: 0, CH_SYSTEM: 0}
     labeled = []
     for start, end, text, channel, cluster in tagged:
         key = (channel, cluster)
         if key not in label_map:
-            counts[channel] += 1
-            label_map[key] = f"{_LABEL_PREFIX[channel]}{counts[channel]}"
+            name = cluster_names.get(key)
+            if name:
+                label_map[key] = name
+            else:
+                counts[channel] += 1
+                label_map[key] = f"{_LABEL_PREFIX[channel]}{counts[channel]}"
         labeled.append(
             LabeledSentence(start=start, end=end, text=text, label=label_map[key])
         )
@@ -643,7 +666,105 @@ def build_labeled_transcript(
         source=source,
         extras=speaker_frontmatter_extras(labeled, diarized),
     )
-    return fm + "\n\n" + build_labeled_body(labeled) + "\n"
+    body = build_labeled_body(labeled)
+    notes_md = build_notes_section(notes)
+    return fm + "\n\n" + body + notes_md + "\n"
+
+
+def _names_from_tags(tagged: list, tags: Optional[list]) -> dict:
+    """Map (channel, cluster) → human name from live tags.
+
+    Each tag (t, name) votes for the cluster of the sentence spanning t
+    (with -1/+4 s tolerance — tags trail speech onset). Majority per cluster
+    wins; the same name winning several clusters merges them in the output.
+    """
+    if not tags:
+        return {}
+    votes: dict = {}
+    for raw_t, raw_name in tags:
+        try:
+            t = float(raw_t)
+        except (TypeError, ValueError):
+            continue
+        name = _sanitize_name(str(raw_name or ""))
+        if not name:
+            continue
+        best_key, best_dist = None, None
+        for start, end, _text, channel, cluster in tagged:
+            if start - 1.0 <= t <= end + 4.0:
+                dist = 0.0 if start <= t <= end else min(
+                    abs(t - start), abs(t - end)
+                )
+                if best_dist is None or dist < best_dist:
+                    best_key, best_dist = (channel, cluster), dist
+        if best_key is not None:
+            votes.setdefault(best_key, {})
+            votes[best_key][name] = votes[best_key].get(name, 0) + 1
+    # One canonical casing per person ACROSS clusters (first-typed wins), so
+    # "brandon" and "Brandon" tags produce one merged speaker, not two.
+    canonical: dict = {}
+    for _t, raw_name in tags:
+        name = _sanitize_name(str(raw_name or ""))
+        if name:
+            canonical.setdefault(name.lower(), name)
+
+    out = {}
+    for key, names in votes.items():
+        merged: dict = {}
+        for n, c in names.items():
+            k = n.lower()
+            merged[k] = merged.get(k, 0) + c
+        winner = max(merged.items(), key=lambda kv: kv[1])[0]
+        out[key] = canonical[winner]
+    return out
+
+
+def parse_notes_log(text: str) -> list:
+    """Notes-window log → [(seconds or None, text)] entries.
+
+    Log lines look like '[MM:SS] note text'. Tag confirmations
+    ('[MM:SS] ▸ Name is speaking') are speaker data already carried by the
+    tags themselves, so they are skipped here. Untimestamped lines (the user
+    edited freely) are kept without a stamp."""
+    import re
+
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^\[(\d+):(\d\d)\]\s*(.*)$", line)
+        if m:
+            t = int(m.group(1)) * 60 + int(m.group(2))
+            body = m.group(3).strip()
+        else:
+            t, body = None, line
+        if not body or body.startswith("▸"):
+            continue
+        out.append((t, body))
+    return out
+
+
+def build_notes_section(notes: Optional[list]) -> str:
+    """Timestamped Notes section appended to the transcript ('' if none).
+    Notes are the user's own words — the summary agent should treat them as
+    higher-signal than the transcript itself."""
+    if not notes:
+        return ""
+    lines = ["", "", "## Notes", ""]
+    for raw_t, raw_text in notes:
+        text = str(raw_text or "").strip()
+        if not text:
+            continue
+        try:
+            m, s = divmod(int(float(raw_t)), 60)
+            stamp = f"[{m:02d}:{s:02d}] "
+        except (TypeError, ValueError):
+            stamp = ""
+        lines.append(f"{stamp}{text}")
+    if len(lines) == 4:
+        return ""
+    return "\n".join(lines)
 
 
 def speaker_frontmatter_extras(labeled: list, diarized: bool) -> list:

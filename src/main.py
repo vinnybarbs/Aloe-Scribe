@@ -245,11 +245,11 @@ class AloeScribe:
         self._diarize_threshold = float(
             config.get("transcriber", {}).get("diarize_threshold", 0) or 0
         ) or None
-        # After a labeled transcript is saved, ask who each speaker was and
-        # rewrite the labels with the typed names.
-        self._prompt_names = bool(
-            config.get("transcriber", {}).get("prompt_speaker_names", True)
-        )
+        # Live meeting metadata from the notes window: speaker tags
+        # [(elapsed_s, name)] and the notes log text. Snapshotted into the
+        # stop job and crash-persisted next to the streaming draft.
+        self._meeting_tags: list = []
+        self._meeting_notes_text: str = ""
 
         # Initialise components
         self.recorder = Recorder(
@@ -316,6 +316,8 @@ class AloeScribe:
                 Path(p), interactive=True
             ),
             processing_check=lambda: self._jobs_inflight > 0,
+            on_meta_changed=self._on_meeting_meta_changed,
+            on_save_transcript=self._on_save_transcript_edits,
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -399,6 +401,9 @@ class AloeScribe:
         """Start capturing audio for this meeting."""
         self._current_meeting = meeting
         self._recording_start = datetime.now()
+        # Fresh meeting, fresh tags/notes (the notes window resets its own UI).
+        self._meeting_tags = []
+        self._meeting_notes_text = ""
         timestamp = self._recording_start.strftime("%Y-%m-%d-%H%M")
         slug = meeting.slug()
         self._recording_path = self.output_dir / f"{timestamp}-{slug}.wav"
@@ -661,6 +666,8 @@ class AloeScribe:
             ),
             "when": getattr(self, "_recording_start", None) or datetime.now(),
             "draft_path": getattr(self, "_draft_path", None),
+            "tags": list(self._meeting_tags),
+            "notes_text": self._meeting_notes_text,
         }
         wav_path = self.recorder.stop()
         # The stream is preview + crash-checkpoint only. Its sentence
@@ -693,10 +700,18 @@ class AloeScribe:
             daemon=True,
         ).start()
 
-    def _labeled_markdown(self, wav_path: Path, title: str, when: datetime) -> str:
+    def _labeled_markdown(
+        self,
+        wav_path: Path,
+        title: str,
+        when: datetime,
+        tags: list = None,
+        notes_text: str = "",
+    ) -> str:
         """Full per-channel labeled transcript markdown, or '' when labeling
         is disabled, the WAV is mono (single-source recording), the backend
-        has no sentence API, or anything in the pipeline fails."""
+        has no sentence API, or anything in the pipeline fails. `tags` are
+        the live speaker tags; `notes_text` the notes-window log."""
         if not self._speaker_labels:
             return ""
         if not hasattr(self.transcriber, "transcribe_sentences"):
@@ -744,6 +759,8 @@ class AloeScribe:
                     when,
                     source,
                     progress=progress,
+                    tags=tags,
+                    notes=speakers.parse_notes_log(notes_text),
                 )
                 or ""
             )
@@ -757,9 +774,12 @@ class AloeScribe:
         the file with the typed names. Best-effort and fully skippable.
         `interactive` marks an explicit user request (the Done screen's
         "Name speakers…" button) — failures get a visible dialog then."""
+        # The automatic post-processing popup is gone (it asked users to
+        # reverse-engineer voices from text, which never worked). This dialog
+        # now opens ONLY on explicit request — the Done screen's button.
         if not hasattr(self.tray, "prompt_speaker_names"):
             return
-        if not self._prompt_names and not interactive:
+        if not interactive:
             return
         try:
             import speakers
@@ -789,6 +809,34 @@ class AloeScribe:
             self.tray.prompt_speaker_names(quotes, text, apply)
         except Exception as e:
             log.debug(f"Speaker naming prompt skipped: {e}")
+
+    def _on_meeting_meta_changed(self, tags: list, notes_text: str):
+        """Debounced pushes from the notes window. Held for the stop job and
+        crash-persisted next to the streaming draft."""
+        self._meeting_tags = list(tags or [])
+        self._meeting_notes_text = notes_text or ""
+        draft = getattr(self, "_draft_path", None)
+        if draft is None:
+            return
+        try:
+            import json
+
+            draft.with_suffix(".meta.json").write_text(
+                json.dumps(
+                    {"tags": self._meeting_tags, "notes": self._meeting_notes_text}
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _on_save_transcript_edits(self, path, text: str):
+        """The notes window's Save button: write the user's edited transcript
+        and re-sync it."""
+        p = Path(path)
+        p.write_text(text, encoding="utf-8")
+        log.info(f"Transcript edits saved: {p.name}")
+        self.syncer.enqueue(p)
 
     def _mono_stt_input(self, wav_path: Path):
         """Return (stt_input, tmp_mono). For stereo split recordings stt_input
@@ -845,7 +893,13 @@ class AloeScribe:
         # error) — an uncaught exception here would kill this daemon thread
         # silently, leaving the WAV orphaned with no transcript and no notice.
         result = None
-        md = self._labeled_markdown(wav_path, title, when)
+        md = self._labeled_markdown(
+            wav_path,
+            title,
+            when,
+            tags=job.get("tags"),
+            notes_text=job.get("notes_text", ""),
+        )
         if md:
             try:
                 md_path.parent.mkdir(parents=True, exist_ok=True)
@@ -884,10 +938,11 @@ class AloeScribe:
             # its crash-insurance purpose.
             draft = job.get("draft_path")
             if draft and draft != md_path:
-                try:
-                    draft.unlink()
-                except Exception:
-                    pass
+                for stale in (draft, draft.with_suffix(".meta.json")):
+                    try:
+                        stale.unlink()
+                    except Exception:
+                        pass
             # Only delete the WAV once we actually have the transcript (and
             # not even then when keep_wav is set).
             if not self._keep_wav:
@@ -908,8 +963,15 @@ class AloeScribe:
             else:
                 self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
-            if md:  # speaker-labeled — ask who the speakers were
-                self._maybe_prompt_speaker_names(md_path)
+            # Load the finished transcript into the notes window (if open)
+            # for click-to-rename and free editing. No popup.
+            try:
+                if hasattr(self.tray, "notes_show_final"):
+                    self.tray.notes_show_final(
+                        md_path, md_path.read_text(encoding="utf-8")
+                    )
+            except Exception:
+                pass
         else:
             # Keep the WAV so the recording can be recovered. Surface the exact
             # command to re-run it.
@@ -1013,8 +1075,13 @@ class AloeScribe:
         if result:
             self.tray.set_done(md_path)
             self.syncer.enqueue(md_path)
-            if md:  # speaker-labeled — ask who the speakers were
-                self._maybe_prompt_speaker_names(md_path)
+            try:
+                if md and hasattr(self.tray, "notes_show_final"):
+                    self.tray.notes_show_final(
+                        md_path, md_path.read_text(encoding="utf-8")
+                    )
+            except Exception:
+                pass
         else:
             log.error(f"Could not transcribe {wav_path}")
             self.tray.set_idle()
