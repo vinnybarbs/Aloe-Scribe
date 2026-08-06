@@ -287,22 +287,24 @@ class NotesWindow(QWidget):
         self._tag_chips = QHBoxLayout()
         bot_l.addLayout(self._tag_chips)
 
-        notes_caption = QLabel("Notes (Enter adds a timestamped line)")
+        self._tag_status = QLabel("")
+        self._tag_status.setObjectName("stateLabel")
+        bot_l.addWidget(self._tag_status)
+
+        notes_caption = QLabel("Notes — saved at the end of the transcript")
         notes_caption.setObjectName("deviceLabel")
         bot_l.addWidget(notes_caption)
-        self._note_entry = QLineEdit()
-        self._note_entry.setPlaceholderText("Type a note, press Enter")
-        self._note_entry.returnPressed.connect(self._add_note)
-        bot_l.addWidget(self._note_entry)
         self._notes_log = QPlainTextEdit()
         self._notes_log.setPlaceholderText(
-            "Notes collect here — edit freely, they are saved into the "
-            "transcript's Notes section."
+            "Free-form meeting notes. Whatever is here when the transcript "
+            "is saved becomes its Notes section."
         )
         self._notes_log.textChanged.connect(self._schedule_meta_push)
         bot_l.addWidget(self._notes_log)
         split.addWidget(bottom)
-        split.setSizes([380, 260])
+        # Notes are the working surface; the transcript is a glanceable
+        # strip (drag the splitter for more).
+        split.setSizes([170, 470])
 
         # Debounce for crash-persistence pushes.
         self._meta_timer = QTimer(self)
@@ -323,6 +325,7 @@ class NotesWindow(QWidget):
         self._transcript_caption.setText("Live transcript")
         self._save_btn.setVisible(False)
         self._notes_log.setPlainText("")
+        self._tag_status.setText("")
 
     def _elapsed(self) -> float:
         if self._meeting_start is None:
@@ -374,19 +377,10 @@ class NotesWindow(QWidget):
             chip.clicked.connect(lambda _=False, n=name: self._record_tag(n))
             self._tag_chips.addWidget(chip)
         m, s = divmod(int(t), 60)
-        self._notes_log.appendPlainText(f"[{m:02d}:{s:02d}] ▸ {name} is speaking")
+        self._tag_status.setText(f"Tagged {name} at {m:02d}:{s:02d}")
         self._schedule_meta_push()
 
     # ---- notes -------------------------------------------------------------
-
-    def _add_note(self):
-        text = self._note_entry.text().strip()
-        if not text:
-            return
-        m, s = divmod(int(self._elapsed()), 60)
-        self._notes_log.appendPlainText(f"[{m:02d}:{s:02d}] {text}")
-        self._note_entry.clear()
-        self._schedule_meta_push()
 
     def _schedule_meta_push(self):
         self._meta_timer.start()
