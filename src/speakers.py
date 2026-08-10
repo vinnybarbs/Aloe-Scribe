@@ -854,17 +854,31 @@ def apply_speaker_names(md_text: str, mapping: dict) -> str:
     if not mapping:
         return md_text
 
-    # Merge case-insensitively: "Brandon Smith" and "Brandon SMith" are the
-    # same person mistyped, not two speakers. First-typed casing wins.
+    # Merge case-insensitively — and against names ALREADY IN THE DOCUMENT,
+    # not just within this mapping. Renames arrive one chip at a time, so
+    # typing "roi leibovich" when the doc has "Roi Leibovich" must merge into
+    # the existing speaker, not mint a case-variant twin. Existing casing
+    # wins, then first-typed casing.
     canonical: dict = {}
+    for line in md_text.splitlines():
+        m = re.match(_LINE_RE, line)
+        if m:
+            canonical.setdefault(m.group(3).lower(), m.group(3))
     for label in sorted(mapping):
         key = mapping[label].lower()
         canonical.setdefault(key, mapping[label])
     mapping = {label: canonical[name.lower()] for label, name in mapping.items()}
 
+    # Channel notes come from the mapping itself — the body's first-seen
+    # walk misses a label merged into an already-present name.
+    channel_notes = [
+        f"{name}={label}"
+        for label, name in sorted(mapping.items())
+        if label != name
+    ]
+
     out_lines = []
     final_order = []
-    channel_notes = []
     seen = set()
     for line in md_text.splitlines():
         m = re.match(_LINE_RE, line)
@@ -874,8 +888,6 @@ def apply_speaker_names(md_text: str, mapping: dict) -> str:
             if name not in seen:
                 seen.add(name)
                 final_order.append(name)
-                if label != name:
-                    channel_notes.append(f"{name}={label}")
             line = f"[{m.group(1)}:{m.group(2)}] {name}: {m.group(4)}"
         out_lines.append(line)
 
@@ -888,6 +900,16 @@ def apply_speaker_names(md_text: str, mapping: dict) -> str:
             count=1,
             flags=re.M,
         )
+    # Renames arrive one at a time: merge this rename's channel notes with
+    # any existing speaker_channels line instead of stacking duplicates.
+    existing = re.search(r'^speaker_channels: "([^"]*)"$', text, flags=re.M)
+    if existing:
+        prior = [n.strip() for n in existing.group(1).split(";") if n.strip()]
+        new_pairs = {n.lower() for n in channel_notes}
+        channel_notes = [
+            n for n in prior if n.lower() not in new_pairs
+        ] + channel_notes
+        text = re.sub(r'^speaker_channels: "[^"]*"\n?', "", text, flags=re.M)
     if channel_notes:
         text = re.sub(
             r"^(speakers: \[[^\]]*\])$",

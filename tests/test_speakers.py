@@ -217,6 +217,17 @@ def test_speaker_naming():
     assert "[00:01] Bob x q: short" in weird
     assert speakers.apply_speaker_names(md, {}) == md
     assert speakers.apply_speaker_names(md, {"M1": "   "}) == md
+
+    # Chip renames arrive ONE AT A TIME. A case-variant of a name already in
+    # the document must merge into it, and speaker_channels must not stack
+    # duplicate lines across successive renames.
+    step1 = speakers.apply_speaker_names(md, {"R1": "Priya Khan"})
+    step2 = speakers.apply_speaker_names(step1, {"R2": "priya khan"})
+    assert "[00:12] Priya Khan: brief" in step2  # merged, existing casing wins
+    assert "priya khan:" not in step2
+    assert "speakers: [M1, Priya Khan]" in step2
+    assert step2.count("speaker_channels:") == 1
+    assert 'speaker_channels: "Priya Khan=R1; Priya Khan=R2"' in step2
     print("ok: speaker naming")
 
 

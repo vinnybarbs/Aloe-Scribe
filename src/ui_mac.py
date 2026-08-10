@@ -413,11 +413,15 @@ class NotesWindow(QWidget):
         try:
             import speakers
 
-            labels = [q[0] for q in speakers.speaker_quotes(text)]
+            quotes = speakers.speaker_quotes(text)
         except Exception:
-            labels = []
-        for label in labels[:12]:
-            chip = QPushButton(label)
+            quotes = []
+        # Biggest talkers first, with line counts — name the monsters, skip
+        # the two-line fragments.
+        quotes.sort(key=lambda q: -q[2])
+        self._current_speakers = [q[0] for q in quotes]
+        for label, _q, count in quotes[:14]:
+            chip = QPushButton(f"{label} · {count}")
             chip.setObjectName("btnSkip")
             chip.setToolTip(f"Rename {label} everywhere in this transcript")
             chip.clicked.connect(lambda _=False, l=label: self._rename_label(l))
@@ -425,8 +429,19 @@ class NotesWindow(QWidget):
         self._chips_row.addStretch(1)
 
     def _rename_label(self, label: str):
-        name, ok = QInputDialog.getText(
-            self, "Rename speaker", f"Who is {label}?"
+        # Existing names first in the dropdown: merging a duplicate cluster
+        # into an already-named speaker is a pick, not a retype.
+        options = [
+            n for n in getattr(self, "_current_speakers", [])
+            if n != label
+        ]
+        name, ok = QInputDialog.getItem(
+            self,
+            "Rename speaker",
+            f"Who is {label}? Pick an existing name to merge, or type a new one.",
+            options,
+            0,
+            True,  # editable — free typing still allowed
         )
         name = (name or "").strip()
         if not ok or not name:
