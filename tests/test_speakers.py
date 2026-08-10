@@ -162,6 +162,18 @@ def test_tag_reconciliation():
     print("ok: tag reconciliation")
 
 
+def test_attendees_frontmatter():
+    labeled = [speakers.LabeledSentence(0.0, 1.0, "hi", "M1")]
+    extras = speakers.speaker_frontmatter_extras(
+        labeled, True, ["Vince Morello", "  ", "Roi, [x]"]
+    )
+    joined = "\n".join(extras)
+    assert "attendees: [Vince Morello, Roi x]" in joined
+    no_roster = speakers.speaker_frontmatter_extras(labeled, True, [])
+    assert not any(line.startswith("attendees:") for line in no_roster)
+    print("ok: attendees frontmatter")
+
+
 def test_notes_section():
     notes = [(65.0, "Follow up with Alex on pricing"), (200, "  "), (10, "intro")]
     md = speakers.build_notes_section(notes)
@@ -284,6 +296,7 @@ def main():
         test_silent_channel_skipped(tmp)
         test_echo_dedupe()
         test_tag_reconciliation()
+        test_attendees_frontmatter()
         test_notes_section()
         test_speaker_naming()
         test_mono_passthrough(tmp)

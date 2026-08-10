@@ -250,6 +250,7 @@ class AloeScribe:
         # stop job and crash-persisted next to the streaming draft.
         self._meeting_tags: list = []
         self._meeting_notes_text: str = ""
+        self._meeting_attendees: list = []
 
         # Initialise components
         self.recorder = Recorder(
@@ -404,6 +405,7 @@ class AloeScribe:
         # Fresh meeting, fresh tags/notes (the notes window resets its own UI).
         self._meeting_tags = []
         self._meeting_notes_text = ""
+        self._meeting_attendees = []
         timestamp = self._recording_start.strftime("%Y-%m-%d-%H%M")
         slug = meeting.slug()
         self._recording_path = self.output_dir / f"{timestamp}-{slug}.wav"
@@ -668,6 +670,7 @@ class AloeScribe:
             "draft_path": getattr(self, "_draft_path", None),
             "tags": list(self._meeting_tags),
             "notes_text": self._meeting_notes_text,
+            "attendees": list(self._meeting_attendees),
         }
         wav_path = self.recorder.stop()
         # The stream is preview + crash-checkpoint only. Its sentence
@@ -707,6 +710,7 @@ class AloeScribe:
         when: datetime,
         tags: list = None,
         notes_text: str = "",
+        attendees: list = None,
     ) -> str:
         """Full per-channel labeled transcript markdown, or '' when labeling
         is disabled, the WAV is mono (single-source recording), the backend
@@ -761,6 +765,7 @@ class AloeScribe:
                     progress=progress,
                     tags=tags,
                     notes=speakers.parse_notes_log(notes_text),
+                    attendees=attendees,
                 )
                 or ""
             )
@@ -810,11 +815,14 @@ class AloeScribe:
         except Exception as e:
             log.debug(f"Speaker naming prompt skipped: {e}")
 
-    def _on_meeting_meta_changed(self, tags: list, notes_text: str):
+    def _on_meeting_meta_changed(
+        self, tags: list, notes_text: str, attendees: list = None
+    ):
         """Debounced pushes from the notes window. Held for the stop job and
         crash-persisted next to the streaming draft."""
         self._meeting_tags = list(tags or [])
         self._meeting_notes_text = notes_text or ""
+        self._meeting_attendees = list(attendees or [])
         draft = getattr(self, "_draft_path", None)
         if draft is None:
             return
@@ -823,7 +831,11 @@ class AloeScribe:
 
             draft.with_suffix(".meta.json").write_text(
                 json.dumps(
-                    {"tags": self._meeting_tags, "notes": self._meeting_notes_text}
+                    {
+                        "tags": self._meeting_tags,
+                        "notes": self._meeting_notes_text,
+                        "attendees": self._meeting_attendees,
+                    }
                 ),
                 encoding="utf-8",
             )
@@ -899,6 +911,7 @@ class AloeScribe:
             when,
             tags=job.get("tags"),
             notes_text=job.get("notes_text", ""),
+            attendees=job.get("attendees"),
         )
         if md:
             try:

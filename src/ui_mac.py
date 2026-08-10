@@ -271,21 +271,39 @@ class NotesWindow(QWidget):
         bottom = QWidget()
         bot_l = QVBoxLayout(bottom)
 
-        tag_caption = QLabel("Who is talking? Tag them while you hear them")
-        tag_caption.setObjectName("deviceLabel")
-        bot_l.addWidget(tag_caption)
-        tag_row = QHBoxLayout()
-        self._tag_edit = QLineEdit()
-        self._tag_edit.setPlaceholderText("Speaker name")
-        self._tag_edit.returnPressed.connect(self._tag_current)
-        tag_row.addWidget(self._tag_edit, 1)
-        tag_btn = QPushButton("Tag")
-        tag_btn.setObjectName("btnSkip")
-        tag_btn.clicked.connect(self._tag_current)
-        tag_row.addWidget(tag_btn, 0)
-        bot_l.addLayout(tag_row)
+        # Attendees first (a calm-moment task at meeting start), assignment
+        # second (a one-click task while someone is talking). Not everyone on
+        # the roster will speak — the roster itself still lands in the
+        # transcript header.
+        att_caption = QLabel("Attendees — add everyone on the call")
+        att_caption.setObjectName("deviceLabel")
+        bot_l.addWidget(att_caption)
+        att_row = QHBoxLayout()
+        self._attendee_edit = QLineEdit()
+        self._attendee_edit.setPlaceholderText("Name (Enter adds)")
+        self._attendee_edit.returnPressed.connect(self._add_attendee)
+        att_row.addWidget(self._attendee_edit, 1)
+        last_btn = QPushButton("Same as last meeting")
+        last_btn.setObjectName("btnSkip")
+        last_btn.clicked.connect(self._load_last_attendees)
+        att_row.addWidget(last_btn, 0)
+        bot_l.addLayout(att_row)
         self._tag_chips = QHBoxLayout()
         bot_l.addLayout(self._tag_chips)
+
+        speak_row = QHBoxLayout()
+        speak_caption = QLabel("Who is speaking now:")
+        speak_caption.setObjectName("deviceLabel")
+        speak_row.addWidget(speak_caption, 0)
+        self._speaker_combo = QComboBox()
+        self._speaker_combo.setEditable(True)
+        self._speaker_combo.lineEdit().setPlaceholderText("Pick an attendee")
+        speak_row.addWidget(self._speaker_combo, 1)
+        assign_btn = QPushButton("Assign")
+        assign_btn.setObjectName("btnSkip")
+        assign_btn.clicked.connect(self._assign_current)
+        speak_row.addWidget(assign_btn, 0)
+        bot_l.addLayout(speak_row)
 
         self._tag_status = QLabel("")
         self._tag_status.setObjectName("stateLabel")
@@ -326,6 +344,7 @@ class NotesWindow(QWidget):
         self._save_btn.setVisible(False)
         self._notes_log.setPlainText("")
         self._tag_status.setText("")
+        self._speaker_combo.clear()
 
     def _elapsed(self) -> float:
         if self._meeting_start is None:
@@ -358,26 +377,65 @@ class NotesWindow(QWidget):
         self._save_btn.setVisible(True)
         self._rebuild_chips(text)
 
-    # ---- speaker tags ------------------------------------------------------
+    # ---- attendees + speaker assignment ------------------------------------
 
-    def _tag_current(self):
-        name = self._tag_edit.text().strip()
+    _LAST_ATTENDEES = (
+        Path.home() / ".cache" / "aloe-scribe" / "last_attendees.json"
+    )
+
+    def _add_attendee(self):
+        name = self._attendee_edit.text().strip()
+        if name:
+            self._register_attendee(name)
+        self._attendee_edit.clear()
+
+    def _register_attendee(self, name: str):
+        if name.lower() in [n.lower() for n in self._known_names]:
+            return
+        self._known_names.append(name)
+        # Roster chip: clicking it assigns that person as the current
+        # speaker — the fastest path once the roster is in.
+        chip = QPushButton(name)
+        chip.setObjectName("btnSkip")
+        chip.setToolTip(f"Click while {name} is talking to assign them")
+        chip.clicked.connect(lambda _=False, n=name: self._record_tag(n))
+        self._tag_chips.addWidget(chip)
+        self._speaker_combo.addItem(name)
+        self._schedule_meta_push()
+
+    def _load_last_attendees(self):
+        try:
+            import json
+
+            for name in json.loads(self._LAST_ATTENDEES.read_text()):
+                if isinstance(name, str) and name.strip():
+                    self._register_attendee(name.strip())
+        except Exception:
+            self._tag_status.setText("No previous attendee list found.")
+
+    def _save_last_attendees(self):
+        try:
+            import json
+
+            self._LAST_ATTENDEES.parent.mkdir(parents=True, exist_ok=True)
+            self._LAST_ATTENDEES.write_text(json.dumps(self._known_names))
+        except Exception:
+            pass
+
+    def _assign_current(self):
+        name = self._speaker_combo.currentText().strip()
         if not name:
             return
+        # Typing a fresh name in the combo adds them to the roster too.
+        self._register_attendee(name)
         self._record_tag(name)
-        self._tag_edit.clear()
 
     def _record_tag(self, name: str):
         t = self._elapsed()
         self._tags.append((t, name))
-        if name.lower() not in [n.lower() for n in self._known_names]:
-            self._known_names.append(name)
-            chip = QPushButton(name)
-            chip.setObjectName("btnSkip")
-            chip.clicked.connect(lambda _=False, n=name: self._record_tag(n))
-            self._tag_chips.addWidget(chip)
         m, s = divmod(int(t), 60)
-        self._tag_status.setText(f"Tagged {name} at {m:02d}:{s:02d}")
+        self._tag_status.setText(f"Assigned {name} at {m:02d}:{s:02d}")
+        self._save_last_attendees()
         self._schedule_meta_push()
 
     # ---- notes -------------------------------------------------------------
@@ -389,7 +447,9 @@ class NotesWindow(QWidget):
         if self._on_meta_changed:
             try:
                 self._on_meta_changed(
-                    list(self._tags), self._notes_log.toPlainText()
+                    list(self._tags),
+                    self._notes_log.toPlainText(),
+                    list(self._known_names),
                 )
             except Exception:
                 pass
@@ -429,12 +489,16 @@ class NotesWindow(QWidget):
         self._chips_row.addStretch(1)
 
     def _rename_label(self, label: str):
-        # Existing names first in the dropdown: merging a duplicate cluster
-        # into an already-named speaker is a pick, not a retype.
+        # Existing speakers plus the attendee roster in the dropdown:
+        # merging a duplicate cluster or naming a fragment is a pick, not a
+        # retype — and silent-so-far attendees are offered too.
         options = [
             n for n in getattr(self, "_current_speakers", [])
             if n != label
         ]
+        for n in self._known_names:
+            if n != label and n.lower() not in [o.lower() for o in options]:
+                options.append(n)
         name, ok = QInputDialog.getItem(
             self,
             "Rename speaker",

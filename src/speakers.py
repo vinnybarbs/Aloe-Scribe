@@ -512,6 +512,7 @@ def build_labeled_transcript(
     progress=None,
     tags: Optional[list] = None,
     notes: Optional[list] = None,
+    attendees: Optional[list] = None,
 ) -> Optional[str]:
     """
     Full speaker-labeled transcript from a split (stereo) recording.
@@ -664,7 +665,7 @@ def build_labeled_transcript(
         when,
         duration,
         source=source,
-        extras=speaker_frontmatter_extras(labeled, diarized),
+        extras=speaker_frontmatter_extras(labeled, diarized, attendees),
     )
     body = build_labeled_body(labeled)
     notes_md = build_notes_section(notes)
@@ -767,8 +768,12 @@ def build_notes_section(notes: Optional[list]) -> str:
     return "\n".join(lines)
 
 
-def speaker_frontmatter_extras(labeled: list, diarized: bool) -> list:
-    """Frontmatter lines describing the labeling scheme for the summary agent."""
+def speaker_frontmatter_extras(
+    labeled: list, diarized: bool, attendees: Optional[list] = None
+) -> list:
+    """Frontmatter lines describing the labeling scheme for the summary agent.
+    `attendees` is the user-entered roster — everyone ON the call, including
+    people who never spoke, which the transcript alone can never reveal."""
     seen = []
     for s in labeled:
         if s.label not in seen:
@@ -783,6 +788,10 @@ def speaker_frontmatter_extras(labeled: list, diarized: bool) -> list:
         f"speakers: [{', '.join(seen)}]",
         f'speaker_key: "{scheme}"',
     ]
+    roster = [_sanitize_name(str(a)) for a in (attendees or [])]
+    roster = [a for a in roster if a]
+    if roster:
+        lines.append(f"attendees: [{', '.join(roster)}]")
     if not diarized:
         lines.append(
             'speaker_note: "Diarization unavailable for this recording — each '
