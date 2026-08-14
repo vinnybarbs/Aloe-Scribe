@@ -554,10 +554,15 @@ class AloeScribe:
         self._stream_thread.start()
 
     def _streaming_loop(self, wav_path, md_path, title, start_dt, stop_event):
-        STEP = 1.5           # feed new audio every ~1.5 s
+        READ = 0.4           # read + VU-meter cadence: fast enough to act as a
+                             # gate check (floor visibly zero when nobody talks,
+                             # immediate bounce when someone does)
+        FEED_EVERY = 4       # feed the ASR stream every 4th read (~1.6 s)
         MD_EVERY = 30.0      # checkpoint the partial transcript to .md every ~30 s
         elapsed = 0.0
         last_md = 0.0
+        tick = 0
+        pending = []         # samples read but not yet fed to the stream
         channels = 0         # resolved from the WAV header once data arrives
 
         # The transcriber runs all MLX work (open, feed, close) on its single
@@ -568,9 +573,10 @@ class AloeScribe:
             return
         log.info("Streaming transcription started")
         while not stop_event.is_set():
-            if stop_event.wait(STEP):
+            if stop_event.wait(READ):
                 break
-            elapsed += STEP
+            elapsed += READ
+            tick += 1
             try:
                 if not wav_path.exists():
                     continue
@@ -609,11 +615,13 @@ class AloeScribe:
                 if chunker is not None:
                     try:
                         chunker.feed(raw[:consumed], channels)
-                        chunker.maybe_process()
                     except Exception as e:
-                        log.warning(f"Incremental step failed: {e}")
-                # Feed the VU bars from the audio we just read — no second
-                # capture process fighting the recorder for the same device.
+                        log.warning(f"Incremental feed failed: {e}")
+                # VU bars on every read — the meter's job is the gate check
+                # (floor at zero in silence, instant bounce on speech), so it
+                # updates at READ cadence, not the slower ASR cadence. Levels
+                # come from the audio actually being recorded — no second
+                # capture process fighting the recorder for the device.
                 try:
                     if hasattr(self.tray, "meter_levels"):
                         import numpy as np
@@ -630,7 +638,18 @@ class AloeScribe:
                 except Exception:
                     pass
                 # Split recordings are stereo; the live stream wants the mix.
-                samples = _pcm_to_mono_float(raw[:consumed], channels)
+                pending.append(_pcm_to_mono_float(raw[:consumed], channels))
+                if tick % FEED_EVERY != 0:
+                    continue
+                if chunker is not None:
+                    try:
+                        chunker.maybe_process()
+                    except Exception as e:
+                        log.warning(f"Incremental step failed: {e}")
+                import numpy as np
+
+                samples = np.concatenate(pending) if len(pending) > 1 else pending[0]
+                pending = []
                 text = self.transcriber.stream_feed(samples)
                 if text:
                     self.tray.live_preview_set(text)
