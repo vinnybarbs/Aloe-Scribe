@@ -28,6 +28,14 @@ INSTALLED_CONFIG="/Applications/${APP_NAME}.app/Contents/Resources/config/config
 REPO_CONFIG="$PROJECT_DIR/config/config.toml"
 TEMPLATE="$PROJECT_DIR/config/config.toml.example"
 
+# Rebuilding under a RUNNING app corrupts its loaded code (lazy imports read
+# a replaced bundle: "bad local file header", failed transcriptions). Refuse
+# until it is quit.
+if pgrep -f "Aloe Scribe.app/Contents/MacOS" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Aloe Scribe is running.${NC} Quit it from the menu bar first, then re-run this update."
+    exit 1
+fi
+
 echo ""
 echo -e "${GREEN}[1/5]${NC} Fetching the latest version from GitHub..."
 if ! git pull --ff-only origin main; then
