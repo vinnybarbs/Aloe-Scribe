@@ -612,6 +612,23 @@ class AloeScribe:
                         chunker.maybe_process()
                     except Exception as e:
                         log.warning(f"Incremental step failed: {e}")
+                # Feed the VU bars from the audio we just read — no second
+                # capture process fighting the recorder for the same device.
+                try:
+                    if hasattr(self.tray, "meter_levels"):
+                        import numpy as np
+
+                        a = np.frombuffer(raw[:consumed], dtype=np.int16)
+                        if channels == 2:
+                            a = a[: (len(a) // 2) * 2].reshape(-1, 2)
+                            mic_pk = float(np.abs(a[:, 0]).max()) / 32768.0
+                            sys_pk = float(np.abs(a[:, 1]).max()) / 32768.0
+                        else:
+                            mic_pk = float(np.abs(a).max()) / 32768.0 if len(a) else 0.0
+                            sys_pk = 0.0
+                        self.tray.meter_levels(mic_pk, sys_pk)
+                except Exception:
+                    pass
                 # Split recordings are stereo; the live stream wants the mix.
                 samples = _pcm_to_mono_float(raw[:consumed], channels)
                 text = self.transcriber.stream_feed(samples)

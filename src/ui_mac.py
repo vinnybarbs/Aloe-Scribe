@@ -930,15 +930,20 @@ class AloeScribeWindow(QMainWindow):
             log.warning(f"Cannot import recorder_mac helpers: {e}")
             return
 
-        # Mic side: still avfoundation/ffmpeg.
-        mic_idx = _resolve_device(self._selected_mic) or _find_default_mic()
-        if mic_idx:
-            self._mic_meter = make_avfoundation_meter(
-                mic_idx,
-                lambda lvl: self._signals.mic_level.emit(lvl),
-            )
-            if self._mic_meter and not self._mic_meter.start():
-                self._mic_meter = None
+        # Mic side: avfoundation/ffmpeg — but ONLY while idle. During
+        # recording the recorder owns the device; a second capture client can
+        # read silence (dead bar), so recording-time levels come straight
+        # from the streaming loop's own reads via meter_levels().
+        self._mic_meter = None
+        if self._state != "recording":
+            mic_idx = _resolve_device(self._selected_mic) or _find_default_mic()
+            if mic_idx:
+                self._mic_meter = make_avfoundation_meter(
+                    mic_idx,
+                    lambda lvl: self._signals.mic_level.emit(lvl),
+                )
+                if self._mic_meter and not self._mic_meter.start():
+                    self._mic_meter = None
 
         # System-audio meter via the SCK helper in --meter mode. Run it ONLY
         # while idle: during recording the recorder owns the SCStream and a
@@ -2065,3 +2070,10 @@ class AloeScribeApp:
     def notes_show_final(self, path, text):
         if self._window:
             self._window.notes_show_final(path, text)
+
+    def meter_levels(self, mic_level, sys_level):
+        """Recording-time VU levels, computed by the streaming loop from the
+        audio it already reads (no second capture process)."""
+        if self._window:
+            self._window._signals.mic_level.emit(mic_level)
+            self._window._signals.sys_level.emit(sys_level)
