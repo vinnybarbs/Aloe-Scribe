@@ -561,6 +561,126 @@ def _parse_sentences(sentences) -> list:
     return parsed
 
 
+class IncrementalChunker:
+    """Process-as-you-go transcription: turns the recording into transcribed
+    sentences WHILE the meeting runs, so stopping costs seconds instead of
+    minutes.
+
+    The live streaming loop feeds every batch of raw PCM here. Per channel,
+    audio accumulates until ~CHUNK_S seconds are buffered, then the chunk is
+    cut at the quietest moment near its end (so sentences aren't split
+    mid-word), written to a temp WAV, and batch-transcribed; sentence
+    timestamps are shifted by the chunk's absolute offset. Near-silent chunks
+    are skipped without transcription. At stop, finalize() transcribes the
+    remaining tail and returns {channel: [sentence dicts]} ready for
+    assemble_labeled_transcript().
+
+    Single-threaded by design: feed/maybe_process run on the streaming
+    thread; finalize runs on the stop worker AFTER that thread has exited.
+    """
+
+    CHUNK_S = 90.0
+    CUT_SEARCH_S = 15.0
+    CUT_WIN_S = 0.3
+
+    def __init__(self, transcribe_sentences, rate: int = 16000,
+                 tmp_dir: Optional[Path] = None):
+        import numpy as np  # noqa: F401 — fail fast if numpy is missing
+
+        self._fn = transcribe_sentences
+        self._rate = rate
+        self._tmp_dir = Path(tmp_dir) if tmp_dir else default_cache_dir().parent
+        self._buffers = {CH_MIC: [], CH_SYSTEM: []}
+        self._offset_s = {CH_MIC: 0.0, CH_SYSTEM: 0.0}
+        self.sentences = {CH_MIC: [], CH_SYSTEM: []}
+        self.chunks_done = 0
+
+    def feed(self, raw: bytes, channels: int):
+        """Interleaved int16 PCM from the growing WAV (stereo split only)."""
+        import numpy as np
+
+        if channels != 2 or not raw:
+            return
+        arr = np.frombuffer(raw, dtype=np.int16)
+        arr = arr[: (len(arr) // 2) * 2].reshape(-1, 2)
+        self._buffers[CH_MIC].append(
+            arr[:, CH_MIC].astype(np.float32) / 32768.0
+        )
+        self._buffers[CH_SYSTEM].append(
+            arr[:, CH_SYSTEM].astype(np.float32) / 32768.0
+        )
+
+    def _buffered_s(self, ch) -> float:
+        return sum(len(b) for b in self._buffers[ch]) / self._rate
+
+    def maybe_process(self) -> bool:
+        """Transcribe at most ONE due chunk (keeps live-preview stalls short).
+        Returns True if a chunk was processed."""
+        for ch in (CH_MIC, CH_SYSTEM):
+            if self._buffered_s(ch) >= self.CHUNK_S:
+                self._process(ch, final=False)
+                return True
+        return False
+
+    def _cut_index(self, samples) -> int:
+        """Quietest CUT_WIN_S window within the last CUT_SEARCH_S of the
+        chunk — cutting there avoids splitting a sentence mid-word."""
+        import numpy as np
+
+        n = int(self.CHUNK_S * self._rate)
+        lo = max(0, n - int(self.CUT_SEARCH_S * self._rate))
+        win = int(self.CUT_WIN_S * self._rate)
+        step = int(0.1 * self._rate)
+        best_i, best_rms = n, None
+        for i in range(lo, n - win, step):
+            seg = samples[i:i + win]
+            rms = float(np.sqrt((seg * seg).mean()))
+            if best_rms is None or rms < best_rms:
+                best_rms, best_i = rms, i + win // 2
+        return best_i
+
+    def _process(self, ch: int, final: bool):
+        import numpy as np
+
+        if not self._buffers[ch]:
+            return
+        samples = np.concatenate(self._buffers[ch])
+        cut = len(samples) if final else self._cut_index(samples)
+        chunk, rest = samples[:cut], samples[cut:]
+        self._buffers[ch] = [rest] if len(rest) else []
+        offset = self._offset_s[ch]
+        self._offset_s[ch] += len(chunk) / self._rate
+        if len(chunk) < self._rate:  # < 1 s — nothing worth transcribing
+            return
+        if activity_fraction(chunk, self._rate) < 0.004:
+            return  # silent stretch — skip the model call entirely
+        tmp = self._tmp_dir / f".aloe-chunk-{ch}-{int(offset)}.wav"
+        try:
+            write_channel_wav(chunk, self._rate, tmp)
+            sents = self._fn(tmp) or []
+            for s in sents:
+                try:
+                    s["start"] = float(s.get("start", 0) or 0) + offset
+                    s["end"] = float(s.get("end", 0) or 0) + offset
+                except Exception:
+                    continue
+            self.sentences[ch].extend(sents)
+            self.chunks_done += 1
+        except Exception as e:
+            log.warning(f"Incremental chunk failed (ch{ch} @{int(offset)}s): {e}")
+        finally:
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
+
+    def finalize(self) -> dict:
+        """Transcribe the remaining tails; returns {channel: sentences}."""
+        for ch in (CH_MIC, CH_SYSTEM):
+            self._process(ch, final=True)
+        return {ch: list(s) for ch, s in self.sentences.items()}
+
+
 def build_labeled_transcript(
     wav_path: Path,
     transcribe_sentences,
@@ -677,11 +797,30 @@ def build_labeled_transcript(
             except Exception:
                 pass
 
+    return _label_and_render(
+        per_channel, turns, tags, notes, attendees, title, when, source
+    )
+
+
+def _label_and_render(
+    per_channel: dict,
+    turns: dict,
+    tags: Optional[list],
+    notes: Optional[list],
+    attendees: Optional[list],
+    title: str,
+    when,
+    source: str,
+) -> Optional[str]:
+    """Shared final stage: cluster-tag every sentence, name clusters from the
+    live tags, and render frontmatter + body + notes. Used by both the batch
+    path and the incremental (process-as-you-go) path."""
+    from frontmatter import build_frontmatter
+
     # Channels whose transcription came back empty don't need their turns.
     for ch in (CH_MIC, CH_SYSTEM):
         if not per_channel[ch]:
             turns[ch] = None
-    note("Building the transcript…")
 
     # Tag each sentence with (channel, cluster), merge both channels by time,
     # then number labels by order of first appearance.
@@ -729,6 +868,70 @@ def build_labeled_transcript(
     body = build_labeled_body(labeled)
     notes_md = build_notes_section(notes)
     return fm + "\n\n" + body + notes_md + "\n"
+
+
+def assemble_labeled_transcript(
+    wav_path: Path,
+    per_channel_sentences: dict,
+    diarizer: Optional[Diarizer],
+    title: str,
+    when,
+    source: str,
+    progress=None,
+    tags: Optional[list] = None,
+    notes: Optional[list] = None,
+    attendees: Optional[list] = None,
+) -> Optional[str]:
+    """Final transcript from ALREADY-TRANSCRIBED sentences (the
+    process-as-you-go path): the STT work happened in chunks during the
+    meeting, so this only runs diarization over the finished channels and
+    renders. With Senko that is seconds, which is what makes stop-to-
+    transcript nearly instant."""
+
+    def note(msg: str):
+        if progress is None:
+            return
+        try:
+            progress(msg)
+        except Exception:
+            pass
+
+    loaded = load_split_channels(wav_path)
+    if loaded is None:
+        return None
+    mic, system, rate = loaded
+    chan_samples = {CH_MIC: mic, CH_SYSTEM: system}
+
+    per_channel = {
+        CH_MIC: _parse_sentences(per_channel_sentences.get(CH_MIC) or []),
+        CH_SYSTEM: _parse_sentences(per_channel_sentences.get(CH_SYSTEM) or []),
+    }
+    per_channel[CH_MIC] = dedupe_echo(per_channel[CH_MIC], per_channel[CH_SYSTEM])
+    if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
+        return None
+
+    turns = {CH_MIC: None, CH_SYSTEM: None}
+    active = [ch for ch in (CH_MIC, CH_SYSTEM) if per_channel[ch]]
+    tmp_wavs = {
+        ch: wav_path.with_name(f".{wav_path.stem}.ch{ch}.wav") for ch in active
+    }
+    try:
+        if diarizer is not None:
+            note("Identifying speakers…")
+            for ch in active:
+                write_channel_wav(chan_samples[ch], rate, tmp_wavs[ch])
+                turns[ch] = diarizer.diarize_file(tmp_wavs[ch])
+    finally:
+        for t in tmp_wavs.values():
+            try:
+                t.unlink()
+            except Exception:
+                pass
+
+    note("Building the transcript…")
+    return _label_and_render(
+        per_channel, turns, tags, notes, attendees, title, when, source
+    )
 
 
 def _names_from_tags(tagged: list, tags: Optional[list]) -> dict:

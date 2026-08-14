@@ -406,6 +406,7 @@ class AloeScribe:
         self._meeting_tags = []
         self._meeting_notes_text = ""
         self._meeting_attendees = []
+        self._chunker = None
         timestamp = self._recording_start.strftime("%Y-%m-%d-%H%M")
         slug = meeting.slug()
         self._recording_path = self.output_dir / f"{timestamp}-{slug}.wav"
@@ -577,6 +578,24 @@ class AloeScribe:
                 if channels == 0:
                     channels = _wav_header_channels(wav_path)
                     self._stream_wav_channels = channels
+                    # Process-as-you-go: chunk-transcribe the meeting WHILE
+                    # it records so Stop costs seconds, not minutes. Stereo
+                    # split recordings only; batch remains the fallback.
+                    if (
+                        channels == 2
+                        and self._speaker_labels
+                        and hasattr(self.transcriber, "transcribe_sentences")
+                    ):
+                        try:
+                            import speakers
+
+                            self._chunker = speakers.IncrementalChunker(
+                                self.transcriber.transcribe_sentences,
+                                tmp_dir=self._draft_path.parent,
+                            )
+                            log.info("Incremental transcription enabled")
+                        except Exception as e:
+                            log.warning(f"Incremental transcription unavailable: {e}")
                 frame_bytes = 2 * channels
                 with open(wav_path, "rb") as f:
                     f.seek(self._stream_offset)
@@ -585,6 +604,13 @@ class AloeScribe:
                 if consumed <= 0:
                     continue
                 self._stream_offset += consumed
+                chunker = getattr(self, "_chunker", None)
+                if chunker is not None:
+                    try:
+                        chunker.feed(raw[:consumed], channels)
+                        chunker.maybe_process()
+                    except Exception as e:
+                        log.warning(f"Incremental step failed: {e}")
                 # Split recordings are stereo; the live stream wants the mix.
                 samples = _pcm_to_mono_float(raw[:consumed], channels)
                 text = self.transcriber.stream_feed(samples)
@@ -671,8 +697,24 @@ class AloeScribe:
             "tags": list(self._meeting_tags),
             "notes_text": self._meeting_notes_text,
             "attendees": list(self._meeting_attendees),
+            "chunker": getattr(self, "_chunker", None),
         }
+        self._chunker = None
         wav_path = self.recorder.stop()
+        # Hand the chunker the audio the live loop had not reached yet, so
+        # finalize() only has the last minute or two left to transcribe.
+        if job["chunker"] is not None and wav_path:
+            try:
+                channels = getattr(self, "_stream_wav_channels", 2)
+                frame_bytes = 2 * channels
+                with open(wav_path, "rb") as f:
+                    f.seek(getattr(self, "_stream_offset", 44))
+                    raw = f.read()
+                raw = raw[: len(raw) - (len(raw) % frame_bytes)]
+                if raw:
+                    job["chunker"].feed(raw, channels)
+            except Exception as e:
+                log.warning(f"Tail feed to chunker failed: {e}")
         # The stream is preview + crash-checkpoint only. Its sentence
         # timestamps are window-relative (parakeet-mlx's streaming decoder
         # never applies a chunk offset, unlike batch), so transcripts built
@@ -850,6 +892,55 @@ class AloeScribe:
         log.info(f"Transcript edits saved: {p.name}")
         self.syncer.enqueue(p)
 
+    def _assembled_markdown(self, wav_path: Path, title: str, when, job: dict) -> str:
+        """Transcript from sentences transcribed DURING the meeting (the
+        process-as-you-go path). '' when there was no chunker or anything
+        fails — callers fall through to the batch pipeline."""
+        chunker = job.get("chunker")
+        if chunker is None or not self._speaker_labels:
+            return ""
+        try:
+            import speakers
+
+            def progress(msg: str):
+                try:
+                    if hasattr(self.tray, "processing_status"):
+                        self.tray.processing_status(msg)
+                except Exception:
+                    pass
+
+            progress("Finishing the last minute of transcription…")
+            per_channel = chunker.finalize()
+            if not any(per_channel.values()):
+                return ""
+            if self._diarizer is None:
+                self._diarizer = speakers.Diarizer(
+                    threshold=self._diarize_threshold
+                )
+            source = (
+                "aloe-scribe-windows" if sys.platform == "win32" else "aloe-scribe-mac"
+            )
+            md = speakers.assemble_labeled_transcript(
+                wav_path,
+                per_channel,
+                self._diarizer,
+                title,
+                when,
+                source,
+                progress=progress,
+                tags=job.get("tags"),
+                notes=speakers.parse_notes_log(job.get("notes_text", "")),
+                attendees=job.get("attendees"),
+            )
+            if md:
+                log.info(
+                    f"Assembled transcript from {chunker.chunks_done} live chunks"
+                )
+            return md or ""
+        except Exception as e:
+            log.warning(f"Incremental assembly failed, falling back to batch: {e}")
+            return ""
+
     def _mono_stt_input(self, wav_path: Path):
         """Return (stt_input, tmp_mono). For stereo split recordings stt_input
         is a hidden temp mono downmix (tmp_mono set — caller deletes it); mono
@@ -899,20 +990,23 @@ class AloeScribe:
         except Exception:
             pass
 
-        # Preferred path for split recordings: per-channel transcription with
-        # speaker labels. Falls back to a plain transcribe of the mono
-        # downmix. Guard against the backend raising (e.g. a Parakeet Metal
-        # error) — an uncaught exception here would kill this daemon thread
-        # silently, leaving the WAV orphaned with no transcript and no notice.
+        # Preferred path for split recordings: sentences already transcribed
+        # incrementally during the meeting — only diarization and rendering
+        # remain, which is seconds. Then per-channel batch, then a plain
+        # transcribe of the mono downmix. Guard against the backend raising —
+        # an uncaught exception here would kill this daemon thread silently,
+        # leaving the WAV orphaned with no transcript and no notice.
         result = None
-        md = self._labeled_markdown(
-            wav_path,
-            title,
-            when,
-            tags=job.get("tags"),
-            notes_text=job.get("notes_text", ""),
-            attendees=job.get("attendees"),
-        )
+        md = self._assembled_markdown(wav_path, title, when, job)
+        if not md:
+            md = self._labeled_markdown(
+                wav_path,
+                title,
+                when,
+                tags=job.get("tags"),
+                notes_text=job.get("notes_text", ""),
+                attendees=job.get("attendees"),
+            )
         if md:
             try:
                 md_path.parent.mkdir(parents=True, exist_ok=True)

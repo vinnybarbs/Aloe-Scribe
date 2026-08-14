@@ -181,6 +181,26 @@ _STYLESHEET = """
         background-color: #F5F8F5; color: #333333;
         border: 1px solid #E2E8E3; border-radius: 10px; font-size: 11px; padding: 6px;
     }
+
+    QLineEdit {
+        font-size: 13px; color: #1E2A23; background-color: #F5F8F5;
+        border: 1px solid #E2E8E3; border-radius: 10px; padding: 9px 12px;
+    }
+    QLineEdit:focus { border: 1px solid #2F8F5B; }
+
+    /* Notes window — notepad-first: the user's words are the product (ink,
+       roomy type on white); the machine's words are the quiet grey strip. */
+    QWidget#notesRoot { background-color: #FFFFFF; }
+    QPlainTextEdit#notesPad {
+        background-color: #FFFFFF; color: #1E2A23;
+        border: none; font-size: 14px; line-height: 1.5; padding: 8px 4px;
+    }
+    QPlainTextEdit#transcriptStrip {
+        background-color: #F5F8F5; color: #8B948C;
+        border: 1px solid #E2E8E3; border-radius: 10px;
+        font-size: 11px; padding: 8px;
+    }
+    QSplitter::handle { background-color: #EEF2EE; height: 3px; }
 """
 
 
@@ -238,6 +258,8 @@ class NotesWindow(QWidget):
         self._known_names: list = []
 
         self.setWindowTitle("Aloe Scribe — Meeting Notes")
+        self.setObjectName("notesRoot")
+        self.setStyleSheet(_STYLESHEET)
         self.resize(520, 640)
 
         layout = QVBoxLayout(self)
@@ -253,6 +275,7 @@ class NotesWindow(QWidget):
         self._chips_row = QHBoxLayout()
         top_l.addLayout(self._chips_row)
         self._transcript = QPlainTextEdit()
+        self._transcript.setObjectName("transcriptStrip")
         self._transcript.setReadOnly(True)
         self._transcript.setPlaceholderText(
             "The transcript streams here while recording."
@@ -323,9 +346,10 @@ class NotesWindow(QWidget):
         notes_caption.setObjectName("deviceLabel")
         bot_l.addWidget(notes_caption)
         self._notes_log = QPlainTextEdit()
+        self._notes_log.setObjectName("notesPad")
         self._notes_log.setPlaceholderText(
-            "Free-form meeting notes. Whatever is here when the transcript "
-            "is saved becomes its Notes section."
+            "Your notes. Rough is fine — a few bullets carry the meeting.\n"
+            "Everything here lands in the transcript's Notes section."
         )
         self._notes_log.textChanged.connect(self._schedule_meta_push)
         bot_l.addWidget(self._notes_log)

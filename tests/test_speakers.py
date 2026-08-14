@@ -186,6 +186,68 @@ def test_notes_section():
     print("ok: notes section")
 
 
+def test_incremental_chunker(tmp: Path):
+    """Chunks cut at silence, offsets applied, silent chunks skipped, tail
+    finalized — with a fake transcriber, no models."""
+    calls = []
+
+    def fake_transcribe(path):
+        with wave.open(str(path), "rb") as w:
+            dur = w.getnframes() / RATE
+        calls.append(round(dur, 1))
+        return [{"start": 0.5, "end": min(2.0, dur), "text": f"chunk{len(calls)}"}]
+
+    ch = speakers.IncrementalChunker(fake_transcribe, tmp_dir=tmp)
+    rng = np.random.default_rng(3)
+
+    def stereo_bytes(mic_loud, sys_loud, seconds):
+        n = int(seconds * RATE)
+        mk = lambda loud: (
+            (rng.standard_normal(n) * (0.2 if loud else 0.0005) * 32767)
+        ).astype(np.int16)
+        return np.stack([mk(mic_loud), mk(sys_loud)], axis=1).tobytes()
+
+    # 60 s: below chunk size — nothing processes yet.
+    ch.feed(stereo_bytes(True, False, 60), 2)
+    assert ch.maybe_process() is False and calls == []
+    # +40 s more mic speech: mic chunk (~90 s) processes; system stays quiet.
+    ch.feed(stereo_bytes(True, False, 40), 2)
+    assert ch.maybe_process() is True
+    assert len(calls) == 1 and 74 <= calls[0] <= 90  # cut inside search window
+    first = ch.sentences[speakers.CH_MIC][0]
+    assert first["start"] == 0.5  # first chunk, zero offset
+    # Drain the silent system channel's due chunk (skipped, no model call).
+    while ch.maybe_process():
+        pass
+    n_calls = len(calls)
+    # Finalize: mic tail transcribes with the chunk offset applied.
+    result = ch.finalize()
+    assert len(calls) == n_calls + 1
+    tail = result[speakers.CH_MIC][-1]
+    assert tail["start"] > 70  # offset carried into the tail sentences
+    assert result[speakers.CH_SYSTEM] == []  # silence never transcribed
+    print("ok: incremental chunker")
+
+
+def test_assemble_labeled(tmp: Path):
+    """assemble_labeled_transcript renders from pre-transcribed sentences
+    (no STT), with tags naming and notes appended."""
+    wav = tmp / "asm.wav"
+    make_split_wav(wav, mic_bursts=[(0.0, 3.0)], sys_bursts=[(4.0, 8.0)], seconds=9.0)
+    per_channel = {
+        speakers.CH_MIC: [{"start": 0.2, "end": 2.8, "text": "hello from mic"}],
+        speakers.CH_SYSTEM: [{"start": 4.2, "end": 7.8, "text": "hello from remote"}],
+    }
+    md = speakers.assemble_labeled_transcript(
+        wav, per_channel, None, "T", __import__("datetime").datetime.now(),
+        "aloe-scribe-mac", tags=[(1.0, "Vince")], notes=[(5, "note here")],
+    )
+    assert "[00:00] Vince: hello from mic" in md
+    assert "R1: hello from remote" in md
+    assert "## Notes" in md and "note here" in md
+    print("ok: assemble labeled")
+
+
 def test_speaker_naming():
     """Quote extraction and name rewriting for the post-recording prompt."""
     md = "\n".join([
@@ -296,6 +358,8 @@ def main():
         test_silent_channel_skipped(tmp)
         test_echo_dedupe()
         test_tag_reconciliation()
+        test_incremental_chunker(tmp)
+        test_assemble_labeled(tmp)
         test_attendees_frontmatter()
         test_notes_section()
         test_speaker_naming()
