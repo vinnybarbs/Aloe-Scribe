@@ -199,6 +199,27 @@ def _download(url: str, dst: Path) -> bool:
 # for its entire (minutes-long) run, which freezes the Qt main thread — the
 # beach-ball-after-stop bug. A subprocess has its own GIL, so the app stays
 # responsive. Keep this self-contained (stdlib + numpy + sherpa_onnx only).
+# Preferred diarization backend (macOS): Senko — CoreML-accelerated
+# 3D-Speaker pipeline with density-based clustering. Validated on real
+# meetings against the sherpa pipeline below: matched the human-confirmed
+# speaker count where sherpa over-split (5 vs 6-10 on the same audio), and
+# runs ~30-60x faster (a 47-min channel in ~7 s on Apple Silicon).
+_SENKO_WORKER = r"""
+import json, sys
+import senko
+
+segs = senko.Diarizer(quiet=True).diarize(sys.argv[1])["merged_segments"]
+ids = {}
+out = []
+for s in segs:
+    spk = s["speaker"]
+    if spk not in ids:
+        ids[spk] = len(ids)
+    out.append((float(s["start"]), float(s["end"]), ids[spk]))
+out.sort()
+print(json.dumps(out))
+"""
+
 _DIARIZE_WORKER = r"""
 import json, sys, wave
 import numpy as np
@@ -343,12 +364,50 @@ class Diarizer:
             log.warning(f"Diarization failed: {e}")
             return None
 
+    def _senko_available(self, exe: str) -> bool:
+        """Probe (once) whether the runtime venv has Senko."""
+        if not hasattr(self, "_senko_ok"):
+            try:
+                self._senko_ok = (
+                    subprocess.run(
+                        [exe, "-c", "import senko"],
+                        capture_output=True,
+                        timeout=120,
+                    ).returncode
+                    == 0
+                )
+            except Exception:
+                self._senko_ok = False
+            if not self._senko_ok:
+                log.info("Senko not available — using sherpa-onnx diarization")
+        return self._senko_ok
+
     def diarize_file(self, wav_path: Path) -> Optional[list]:
         """Diarize a mono 16 kHz WAV in a SUBPROCESS so the multi-minute
-        sherpa call cannot hold this process's GIL (which froze the app's
-        UI). Falls back to in-process when no interpreter is available or
-        the subprocess fails. Same return shape as diarize()."""
+        model call cannot hold this process's GIL (which froze the app's
+        UI). Prefers Senko (fast, better speaker counting), falls back to
+        the sherpa pipeline, then to in-process sherpa. Same return shape
+        as diarize()."""
         exe = _worker_python()
+        if exe is not None and self._senko_available(exe):
+            try:
+                proc = subprocess.run(
+                    [exe, "-c", _SENKO_WORKER, str(wav_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=1800,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    return [
+                        (float(a), float(b), int(c))
+                        for a, b, c in json.loads(proc.stdout)
+                    ]
+                log.warning(
+                    f"Senko subprocess failed (rc={proc.returncode}): "
+                    f"{(proc.stderr or '').strip()[-300:]} — falling back to sherpa"
+                )
+            except Exception as e:
+                log.warning(f"Senko subprocess error: {e} — falling back to sherpa")
         if exe is not None:
             paths = self._model_paths()
             if paths is None:

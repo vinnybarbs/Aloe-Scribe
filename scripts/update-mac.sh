@@ -71,6 +71,13 @@ if [ -x "$VENV_DIR/bin/pip" ]; then
         "$VENV_DIR/bin/pip" install -q --require-hashes -r "$PROJECT_DIR/requirements-mac.txt" \
             && echo "  Dependencies up to date." \
             || echo -e "  ${YELLOW}⚠ Dependency sync failed — the app still works; optional features may be off. Re-run the update to retry.${NC}"
+        # Senko diarization (macOS, CoreML): a git dependency, so it lives
+        # outside the hash-locked file — pinned to a commit instead.
+        # Non-fatal: without it the app falls back to sherpa diarization.
+        "$VENV_DIR/bin/pip" install -q \
+            "senko @ git+https://github.com/narcotic-sh/senko@ba0e12ed923ff49e8c2d9d9a3e42d7923cb95724" \
+            && echo "  Senko diarization ready." \
+            || echo -e "  ${YELLOW}⚠ Senko install failed — speaker identification uses the slower fallback.${NC}"
     else
         echo "  Intel Mac — skipping (whisper fallback has no new deps)."
     fi

@@ -91,6 +91,13 @@ if [ "$ARCH" = "arm64" ]; then
         echo "  ✗ Hash-verified install failed — falling back to whisper"
         INSTALL_WHISPER=1
     fi
+    # Senko diarization (CoreML): a git dependency, so it lives outside the
+    # hash-locked file — pinned to a commit instead. Non-fatal: without it
+    # speaker identification uses the slower sherpa fallback.
+    "$VENV_DIR/bin/pip" install -q \
+        "senko @ git+https://github.com/narcotic-sh/senko@ba0e12ed923ff49e8c2d9d9a3e42d7923cb95724" \
+        && echo "  ✓ Senko diarization ready" \
+        || echo "  ⚠ Senko install failed — speaker identification uses the slower fallback."
 else
     echo "  ⚠ Detected Intel Mac (arch=$ARCH) — parakeet-mlx requires Apple Silicon."
     echo "    Installing base deps + falling back to whisper.cpp."
