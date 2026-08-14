@@ -47,6 +47,10 @@ OPTIONS = {
         "tty",
         "termios",
         "pty",
+        # cmath was reaching the bundle only through scipy/sklearn's static
+        # imports; excluding that tree (Senko fallout) dropped it and broke
+        # Parakeet loading in the frozen app ("No module named 'cmath'").
+        "cmath",
     ],
     "packages": [
         "PyQt6",
