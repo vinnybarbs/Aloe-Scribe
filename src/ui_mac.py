@@ -472,9 +472,19 @@ class NotesWindow(QWidget):
         speak_row.addWidget(assign_btn, 0)
         bot_l.addLayout(speak_row)
 
+        status_row = QHBoxLayout()
         self._tag_status = QLabel("")
         self._tag_status.setObjectName("stateLabel")
-        bot_l.addWidget(self._tag_status)
+        status_row.addWidget(self._tag_status, 1)
+        self._undo_tag_btn = QPushButton("Undo tag")
+        self._undo_tag_btn.setObjectName("btnSkip")
+        self._undo_tag_btn.setToolTip(
+            "Retract the last speaker assignment (mis-clicks happen)"
+        )
+        self._undo_tag_btn.setVisible(False)
+        self._undo_tag_btn.clicked.connect(self._undo_last_tag)
+        status_row.addWidget(self._undo_tag_btn, 0)
+        bot_l.addLayout(status_row)
 
         notes_caption = QLabel("Notes — saved at the end of the transcript")
         notes_caption.setObjectName("deviceLabel")
@@ -605,7 +615,17 @@ class NotesWindow(QWidget):
         self._tags.append((t, name))
         m, s = divmod(int(t), 60)
         self._tag_status.setText(f"Assigned {name} at {m:02d}:{s:02d}")
+        self._undo_tag_btn.setVisible(True)
         self._save_last_attendees()
+        self._schedule_meta_push()
+
+    def _undo_last_tag(self):
+        if not self._tags:
+            return
+        t, name = self._tags.pop()
+        m, s = divmod(int(t), 60)
+        self._tag_status.setText(f"Removed the {name} tag from {m:02d}:{s:02d}")
+        self._undo_tag_btn.setVisible(bool(self._tags))
         self._schedule_meta_push()
 
     # ---- notes -------------------------------------------------------------
