@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QPlainTextEdit,
     QInputDialog,
+    QCompleter,
 )
 
 from audio_meter import make_avfoundation_meter, make_sck_meter
@@ -278,16 +279,25 @@ class NotesWindow(QWidget):
         att_caption = QLabel("Attendees — add everyone on the call")
         att_caption.setObjectName("deviceLabel")
         bot_l.addWidget(att_caption)
-        att_row = QHBoxLayout()
         self._attendee_edit = QLineEdit()
         self._attendee_edit.setPlaceholderText("Name (Enter adds)")
         self._attendee_edit.returnPressed.connect(self._add_attendee)
-        att_row.addWidget(self._attendee_edit, 1)
-        last_btn = QPushButton("Same as last meeting")
-        last_btn.setObjectName("btnSkip")
-        last_btn.clicked.connect(self._load_last_attendees)
-        att_row.addWidget(last_btn, 0)
-        bot_l.addLayout(att_row)
+        # Autocomplete from every attendee ever entered — recurring names
+        # come back with two keystrokes, no extra button.
+        try:
+            import json
+
+            history = [
+                n
+                for n in json.loads(self._LAST_ATTENDEES.read_text())
+                if isinstance(n, str) and n.strip()
+            ]
+        except Exception:
+            history = []
+        completer = QCompleter(sorted(set(history)))
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._attendee_edit.setCompleter(completer)
+        bot_l.addWidget(self._attendee_edit)
         self._tag_chips = QHBoxLayout()
         bot_l.addLayout(self._tag_chips)
 
@@ -403,22 +413,24 @@ class NotesWindow(QWidget):
         self._speaker_combo.addItem(name)
         self._schedule_meta_push()
 
-    def _load_last_attendees(self):
-        try:
-            import json
-
-            for name in json.loads(self._LAST_ATTENDEES.read_text()):
-                if isinstance(name, str) and name.strip():
-                    self._register_attendee(name.strip())
-        except Exception:
-            self._tag_status.setText("No previous attendee list found.")
-
     def _save_last_attendees(self):
+        """Accumulate a name history (union across meetings, capped) that
+        feeds the attendee field's autocomplete."""
         try:
             import json
 
             self._LAST_ATTENDEES.parent.mkdir(parents=True, exist_ok=True)
-            self._LAST_ATTENDEES.write_text(json.dumps(self._known_names))
+            try:
+                history = json.loads(self._LAST_ATTENDEES.read_text())
+            except Exception:
+                history = []
+            merged = list(
+                dict.fromkeys(
+                    [n for n in history if isinstance(n, str)]
+                    + self._known_names
+                )
+            )[-200:]
+            self._LAST_ATTENDEES.write_text(json.dumps(merged))
         except Exception:
             pass
 
