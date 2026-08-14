@@ -162,6 +162,40 @@ def test_tag_reconciliation():
     print("ok: tag reconciliation")
 
 
+def test_merge_transcripts():
+    """Split-meeting merge: wall-clock offset, label renumbering, name
+    passthrough, attendees union, notes shifting."""
+    part1 = "\n".join([
+        "---", 'title: "Weekly sync"', "date: 2026-08-14T10:00:00-06:00",
+        "end: 2026-08-14T10:10:00-06:00", "duration_min: 10",
+        "source: aloe-scribe-mac", "speakers: [Vince, R1]",
+        "attendees: [Vince, Brandon]", "---", "",
+        "[00:05] Vince: kicking off",
+        "[04:00] R1: first remote voice",
+        "",
+        "## Notes", "", "[02:00] note one",
+    ])
+    part2 = "\n".join([
+        "---", 'title: "Weekly sync"', "date: 2026-08-14T10:12:00-06:00",
+        "end: 2026-08-14T10:20:00-06:00", "duration_min: 8",
+        "source: aloe-scribe-mac", "speakers: [R1, Vince]",
+        "attendees: [Vince, Kacey]", "---", "",
+        "[00:10] R1: a DIFFERENT remote voice after the restart",
+        "[01:00] Vince: still me",
+    ])
+    md = speakers.merge_transcripts([part2, part1])  # order-insensitive
+    assert "[00:05] Vince: kicking off" in md
+    # Part 2 starts 12 min after part 1 → its 00:10 line lands at 12:10.
+    assert "[12:10] R2: a DIFFERENT remote voice after the restart" in md
+    assert "[13:00] Vince: still me" in md
+    assert "[04:00] R1: first remote voice" in md  # part 1 label kept
+    assert "speakers: [Vince, R1, R2]" in md
+    assert "attendees: [Vince, Brandon, Kacey]" in md
+    assert "[14:00] note one" not in md and "[02:00] note one" in md
+    assert speakers.merge_transcripts([part1]) is None  # one part = no merge
+    print("ok: merge transcripts")
+
+
 def test_attendees_frontmatter():
     labeled = [speakers.LabeledSentence(0.0, 1.0, "hi", "M1")]
     extras = speakers.speaker_frontmatter_extras(
@@ -360,6 +394,7 @@ def main():
         test_tag_reconciliation()
         test_incremental_chunker(tmp)
         test_assemble_labeled(tmp)
+        test_merge_transcripts()
         test_attendees_frontmatter()
         test_notes_section()
         test_speaker_naming()

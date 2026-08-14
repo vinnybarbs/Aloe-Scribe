@@ -226,6 +226,140 @@ class _Signals(QObject):
 
 
 # ---------------------------------------------------------------------------
+# Recordings browser — the output folder as a list with actions
+# ---------------------------------------------------------------------------
+class RecordingsDialog(QDialog):
+    """What's in the transcripts folder, with the two actions that matter:
+    Transcribe (audio that never got a transcript — crashes, imports) and
+    Merge (one meeting split into two transcripts because a call quit
+    midway). Replaces the bare file-picker button."""
+
+    def __init__(self, parent, output_dir: Path, on_transcribe, on_merge):
+        super().__init__(parent)
+        self._on_transcribe = on_transcribe
+        self._on_merge = on_merge
+        self._output_dir = output_dir
+        self.setWindowTitle("Aloe Scribe — Recordings")
+        self.setStyleSheet(_STYLESHEET)
+        self.resize(480, 420)
+
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
+
+        layout = QVBoxLayout(self)
+        cap = QLabel(str(output_dir))
+        cap.setObjectName("deviceLabel")
+        layout.addWidget(cap)
+
+        self._list = QListWidget()
+        self._list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        layout.addWidget(self._list)
+
+        rows = []
+        try:
+            wavs = sorted(
+                output_dir.glob("*.wav"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            mds = sorted(
+                output_dir.glob("*.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for w in wavs:
+                if not w.with_suffix(".md").exists():
+                    rows.append((w, f"{w.name}   — audio, needs transcription"))
+            for m in mds[:30]:
+                rows.append((m, m.name))
+        except Exception as e:
+            log.warning(f"Recordings listing failed: {e}")
+        for path, label in rows:
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            self._list.addItem(item)
+
+        btn_row = QHBoxLayout()
+        self._transcribe_btn = QPushButton("Transcribe")
+        self._transcribe_btn.setObjectName("btnStart")
+        self._transcribe_btn.clicked.connect(self._do_transcribe)
+        self._merge_btn = QPushButton("Merge into one")
+        self._merge_btn.setObjectName("btnSkip")
+        self._merge_btn.setToolTip(
+            "Select the parts of a meeting that got split by a quit or "
+            "crash — they combine into a single transcript on the real "
+            "meeting timeline."
+        )
+        self._merge_btn.clicked.connect(self._do_merge)
+        open_btn = QPushButton("Open Folder")
+        open_btn.setObjectName("btnSkip")
+        open_btn.clicked.connect(
+            lambda: subprocess.Popen(["open", str(output_dir)])
+        )
+        browse = QPushButton("Browse…")
+        browse.setObjectName("btnSkip")
+        browse.clicked.connect(self._browse)
+        btn_row.addWidget(self._transcribe_btn)
+        btn_row.addWidget(self._merge_btn)
+        btn_row.addWidget(open_btn)
+        btn_row.addWidget(browse)
+        layout.addLayout(btn_row)
+
+        self._list.itemSelectionChanged.connect(self._update_buttons)
+        self._update_buttons()
+
+    def _selected(self):
+        return [
+            Path(i.data(Qt.ItemDataRole.UserRole))
+            for i in self._list.selectedItems()
+        ]
+
+    def _update_buttons(self):
+        sel = self._selected()
+        self._transcribe_btn.setEnabled(
+            len(sel) == 1 and sel[0].suffix == ".wav"
+        )
+        self._merge_btn.setEnabled(
+            len(sel) >= 2 and all(p.suffix == ".md" for p in sel)
+        )
+
+    def _do_transcribe(self):
+        sel = self._selected()
+        if len(sel) == 1 and self._on_transcribe:
+            self.accept()
+            self._on_transcribe(str(sel[0]))
+
+    def _do_merge(self):
+        sel = self._selected()
+        if len(sel) < 2 or not self._on_merge:
+            return
+        resp = QMessageBox.question(
+            self,
+            "Merge transcripts",
+            f"Combine these {len(sel)} transcripts into one meeting?\n\n"
+            "The parts merge into the earliest file on the real meeting "
+            "timeline, and the other part files are removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if resp == QMessageBox.StandardButton.Yes:
+            self.accept()
+            self._on_merge([str(p) for p in sel])
+
+    def _browse(self):
+        path, _f = QFileDialog.getOpenFileName(
+            self,
+            "Choose a recording to transcribe",
+            str(self._output_dir),
+            "Audio files (*.wav *.m4a *.mp3 *.aiff *.flac *.ogg);;All files (*)",
+        )
+        if path and self._on_transcribe:
+            self.accept()
+            self._on_transcribe(path)
+
+
+# ---------------------------------------------------------------------------
 # Meeting notes window — live notepad + speaker tags + transcript pane
 # ---------------------------------------------------------------------------
 class NotesWindow(QWidget):
@@ -585,6 +719,7 @@ class AloeScribeWindow(QMainWindow):
         on_name_speakers: Callable = None,
         on_meta_changed: Callable = None,
         on_save_transcript: Callable = None,
+        on_merge_transcripts: Callable = None,
         live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
@@ -601,6 +736,7 @@ class AloeScribeWindow(QMainWindow):
         self._on_name_speakers = on_name_speakers
         self._on_meta_changed = on_meta_changed
         self._on_save_transcript = on_save_transcript
+        self._on_merge_transcripts = on_merge_transcripts
         self._notes_window: Optional[NotesWindow] = None
         self._live_preview_enabled = live_preview
         self._selected_mic = current_mic
@@ -1085,9 +1221,9 @@ class AloeScribeWindow(QMainWindow):
         self._render_idle()
 
     def _build_transcribe_file_row(self) -> bool:
-        """Show a 'Transcribe a file' button that opens a native file picker,
-        so ANY audio file can be transcribed — not just orphans the app finds
-        in the output folder. Returns True if the row was added."""
+        """Show a 'Recordings…' button that opens the folder browser — from
+        there: transcribe orphan audio, merge split meetings, open the
+        folder, or browse to any file. Returns True if the row was added."""
         if not self._on_transcribe_file:
             return False
 
@@ -1096,35 +1232,44 @@ class AloeScribeWindow(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         self._content_layout.addWidget(sep)
 
-        go = QPushButton("Transcribe a file…")
+        go = QPushButton("Recordings…")
         go.setObjectName("btnSkip")
-        go.clicked.connect(self._on_transcribe_clicked)
+        go.clicked.connect(self._open_recordings)
         self._content_layout.addWidget(go)
         return True
 
-    def _on_transcribe_clicked(self):
-        if not self._on_transcribe_file:
-            return
-        out_dir = (
+    def _resolved_output_dir(self) -> Path:
+        return (
             Path(self._output_dir).expanduser()
             if self._output_dir
             else Path("~/meetings").expanduser()
         )
-        path, _filter = QFileDialog.getOpenFileName(
+
+    def _open_recordings(self):
+        dlg = RecordingsDialog(
             self,
-            "Choose a recording to transcribe",
-            str(out_dir),
-            "Audio files (*.wav *.m4a *.mp3 *.aiff *.flac *.ogg);;All files (*)",
+            self._resolved_output_dir(),
+            on_transcribe=self._start_transcribe_file,
+            on_merge=self._start_merge,
         )
-        if not path:
+        dlg.exec()
+
+    def _start_transcribe_file(self, path: str):
+        if not self._on_transcribe_file:
             return
         log.info(f"UI: transcribe existing recording: {path}")
         # Show the processing screen, then run transcription off the UI thread.
         self._signals.set_processing.emit()
-        import threading
-
         threading.Thread(
             target=lambda: self._on_transcribe_file(path), daemon=True
+        ).start()
+
+    def _start_merge(self, paths: list):
+        if not self._on_merge_transcripts:
+            return
+        log.info(f"UI: merge transcripts: {[Path(p).name for p in paths]}")
+        threading.Thread(
+            target=lambda: self._on_merge_transcripts(paths), daemon=True
         ).start()
 
     def _render_recording(self, meeting):
@@ -1648,6 +1793,7 @@ class AloeScribeApp:
                  on_output_dir_change=None, on_transcribe_file=None,
                  on_name_speakers=None, processing_check=None,
                  on_meta_changed=None, on_save_transcript=None,
+                 on_merge_transcripts=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1661,6 +1807,7 @@ class AloeScribeApp:
         self._processing_check = processing_check
         self._on_meta_changed = on_meta_changed
         self._on_save_transcript = on_save_transcript
+        self._on_merge_transcripts = on_merge_transcripts
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -1703,6 +1850,7 @@ class AloeScribeApp:
             on_name_speakers=self._on_name_speakers,
             on_meta_changed=self._on_meta_changed,
             on_save_transcript=self._on_save_transcript,
+            on_merge_transcripts=self._on_merge_transcripts,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,

@@ -982,6 +982,130 @@ def _names_from_tags(tagged: list, tags: Optional[list]) -> dict:
     return out
 
 
+def transcript_date(md_text: str):
+    """The frontmatter `date` of a transcript, or None."""
+    import re
+    from datetime import datetime
+
+    m = re.search(r"^date: (.+)$", md_text, flags=re.M)
+    if not m:
+        return None
+    try:
+        return datetime.fromisoformat(m.group(1).strip())
+    except ValueError:
+        return None
+
+
+def merge_transcripts(parts: list) -> Optional[str]:
+    """Merge transcripts of ONE meeting that got split (app quit mid-call,
+    crash and restart) into a single coherent transcript.
+
+    `parts`: list of markdown texts. They are ordered by their frontmatter
+    `date`, later parts' timestamps are shifted by the real wall-clock gap
+    (so the merged [MM:SS] times reflect the actual meeting timeline,
+    including the gap where nothing recorded), anonymous labels are
+    renumbered so part 2's R1 does not collide with part 1's different R1,
+    named speakers with the same name merge, and attendees and notes
+    combine. Returns None if fewer than two parseable parts."""
+    import re
+    from datetime import datetime
+
+    from frontmatter import build_frontmatter
+
+    parsed = []
+    for text in parts:
+        m_date = re.search(r"^date: (.+)$", text, flags=re.M)
+        m_end = re.search(r"^end: (.+)$", text, flags=re.M)
+        m_title = re.search(r'^title: "(.*)"$', text, flags=re.M)
+        if not m_date:
+            continue
+        try:
+            date = datetime.fromisoformat(m_date.group(1).strip())
+            end = (
+                datetime.fromisoformat(m_end.group(1).strip())
+                if m_end
+                else date
+            )
+        except ValueError:
+            continue
+        m_att = re.search(r"^attendees: \[([^\]]*)\]$", text, flags=re.M)
+        attendees = (
+            [a.strip() for a in m_att.group(1).split(",") if a.strip()]
+            if m_att
+            else []
+        )
+        m_src = re.search(r"^source: (.+)$", text, flags=re.M)
+        body, _, notes_part = text.partition("## Notes")
+        lines = []
+        for line in body.splitlines():
+            lm = re.match(_LINE_RE, line)
+            if lm:
+                sec = int(lm.group(1)) * 60 + int(lm.group(2))
+                lines.append((float(sec), lm.group(3), lm.group(4)))
+        parsed.append({
+            "date": date,
+            "end": end,
+            "title": m_title.group(1) if m_title else "Recording",
+            "source": (m_src.group(1).strip() if m_src else "aloe-scribe"),
+            "attendees": attendees,
+            "lines": lines,
+            "notes": parse_notes_log(notes_part),
+        })
+
+    if len(parsed) < 2:
+        return None
+    parsed.sort(key=lambda p: p["date"])
+    base = parsed[0]
+
+    anon = re.compile(r"^([MR])(\d+)$")
+    counts = {"M": 0, "R": 0}
+    all_lines = []
+    all_notes = []
+    attendees: list = []
+    for part in parsed:
+        offset = (part["date"] - base["date"]).total_seconds()
+        # Renumber this part's anonymous labels past everything used so far;
+        # named speakers pass through and merge naturally.
+        relabel = {}
+        for _sec, label, _text in part["lines"]:
+            am = anon.match(label)
+            if am and label not in relabel:
+                counts[am.group(1)] += 1
+                relabel[label] = f"{am.group(1)}{counts[am.group(1)]}"
+        for sec, label, text in part["lines"]:
+            all_lines.append(
+                LabeledSentence(
+                    start=sec + offset,
+                    end=sec + offset,
+                    text=text,
+                    label=relabel.get(label, label),
+                )
+            )
+        for t, note_text in part["notes"]:
+            all_notes.append(
+                (t + offset if t is not None else None, note_text)
+            )
+        for a in part["attendees"]:
+            if a.lower() not in [x.lower() for x in attendees]:
+                attendees.append(a)
+
+    if not all_lines:
+        return None
+    all_lines.sort(key=lambda s: s.start)
+    duration = (parsed[-1]["end"] - base["date"]).total_seconds()
+    fm = build_frontmatter(
+        base["title"],
+        base["date"],
+        max(duration, all_lines[-1].start),
+        source=base["source"],
+        extras=speaker_frontmatter_extras(all_lines, True, attendees),
+    )
+    return (
+        fm + "\n\n" + build_labeled_body(all_lines)
+        + build_notes_section(all_notes) + "\n"
+    )
+
+
 def parse_notes_log(text: str) -> list:
     """Notes-window log → [(seconds or None, text)] entries.
 

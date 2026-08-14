@@ -319,6 +319,7 @@ class AloeScribe:
             processing_check=lambda: self._jobs_inflight > 0,
             on_meta_changed=self._on_meeting_meta_changed,
             on_save_transcript=self._on_save_transcript_edits,
+            on_merge_transcripts=self._merge_transcript_files,
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -883,6 +884,51 @@ class AloeScribe:
             )
         except Exception:
             pass
+
+    def _merge_transcript_files(self, paths: list):
+        """Merge transcripts of one split meeting (chosen in the Recordings
+        browser) into the earliest part's file; the other part files are
+        removed, so the summary agent sees exactly one meeting."""
+        try:
+            import speakers
+
+            files = [Path(p) for p in paths]
+            texts = {p: p.read_text(encoding="utf-8") for p in files}
+            merged = speakers.merge_transcripts(list(texts.values()))
+            if not merged:
+                self._show_error(
+                    "Could not merge — the selected files do not look like "
+                    "parts of one meeting (each needs a date header)."
+                )
+                return
+            from datetime import timezone
+
+            far_future = datetime.max.replace(tzinfo=timezone.utc)
+            target = min(
+                files,
+                key=lambda p: speakers.transcript_date(texts[p]) or far_future,
+            )
+            target.write_text(merged, encoding="utf-8")
+            for p in files:
+                if p != target:
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+            log.info(f"Merged {len(files)} transcripts into {target.name}")
+            self.syncer.enqueue(target)
+            try:
+                import notifications
+
+                notifications.send(
+                    "Aloe Scribe",
+                    f"Merged {len(files)} transcripts into {target.name}",
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            log.error(f"Transcript merge failed: {e}")
+            self._show_error(f"Merge failed: {e}")
 
     def _on_save_transcript_edits(self, path, text: str):
         """The notes window's Save button: write the user's edited transcript
