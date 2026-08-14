@@ -5,6 +5,9 @@ Usage: .venv/bin/python3 setup.py py2app
 
 import sys
 sys.path.insert(0, "src")
+# scikit-learn/numba import graphs (pulled in by Senko) overflow
+# modulegraph's default recursion limit.
+sys.setrecursionlimit(10000)
 
 from setuptools import setup
 
@@ -64,6 +67,20 @@ OPTIONS = {
         # Native onnx runtime — same runtime-from-venv treatment as mlx.
         # speakers.py imports it lazily and degrades gracefully without it.
         "sherpa_onnx",
+        # Senko diarization runs ONLY in a venv subprocess (see
+        # speakers.diarize_file) — the frozen app never imports it. Its dep
+        # tree (sklearn/numba/coremltools) breaks modulegraph, so keep the
+        # whole family out of the bundle.
+        "senko",
+        "sklearn",
+        "scipy",
+        "numba",
+        "llvmlite",
+        "umap",
+        "hdbscan",
+        "coremltools",
+        "soundfile",
+        "colour",
         "huggingface_hub",
         "transformers",
         "torch",
