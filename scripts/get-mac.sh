@@ -30,7 +30,7 @@ INSTALL_DIR="$HOME/aloe-scribe"
 BOLD=$'\033[1m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 
 echo ""
-echo "${BOLD}Aloe Scribe — macOS installer${NC}"
+echo "${BOLD}Aloe Scribe · macOS installer${NC}"
 echo ""
 
 # -----------------------------------------------------------
@@ -43,7 +43,7 @@ fi
 
 OS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 if [ "${OS_MAJOR:-0}" -lt 13 ]; then
-    echo "${RED}macOS 13 (Ventura) or newer is required${NC} — system audio capture uses ScreenCaptureKit."
+    echo "${RED}macOS 13 (Ventura) or newer is required${NC}. System audio capture uses ScreenCaptureKit."
     exit 1
 fi
 
@@ -58,7 +58,7 @@ fi
 # -----------------------------------------------------------
 if ! xcode-select -p >/dev/null 2>&1; then
     echo "${YELLOW}Xcode Command Line Tools are required${NC} (they provide git and the Swift compiler)."
-    echo "macOS should now show an install dialog — click Install, wait for it to"
+    echo "macOS should now show an install dialog. Click Install, wait for it to"
     echo "finish, then run this installer again."
     xcode-select --install >/dev/null 2>&1 || true
     exit 1
@@ -88,7 +88,7 @@ cd "$INSTALL_DIR"
 if bash scripts/create-signing-cert.sh; then
     :
 else
-    echo "${YELLOW}Signing-cert setup failed — continuing with ad-hoc signing.${NC}"
+    echo "${YELLOW}Signing-cert setup failed. Continuing with ad-hoc signing.${NC}"
     echo "The app will still work, but macOS will re-ask for Screen Recording and"
     echo "Microphone permissions after each update."
 fi
@@ -101,7 +101,7 @@ fi
 # update-mac.sh, which preserves the user's settings (mic, calendar URL,
 # output folder); install-mac.sh would reset them.
 if [ -d "/Applications/Aloe Scribe.app" ]; then
-    echo "${GREEN}Existing install detected — updating (your settings are kept)...${NC}"
+    echo "${GREEN}Existing install detected. Updating, and your settings are kept...${NC}"
     bash scripts/update-mac.sh
 else
     bash scripts/install-mac.sh

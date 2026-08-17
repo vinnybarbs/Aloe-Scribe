@@ -21,7 +21,7 @@ fi
 
 echo ""
 echo "${BOLD}=========================================${NC}"
-echo "${BOLD}  Aloe Scribe — macOS Setup${NC}"
+echo "${BOLD}  Aloe Scribe · macOS Setup${NC}"
 echo "${BOLD}=========================================${NC}"
 echo ""
 
@@ -46,7 +46,7 @@ echo "  ffmpeg, rclone, python, cmake OK"
 # 3. System audio capture
 # -----------------------------------------------------------
 echo -e "${GREEN}[3/6]${NC} System audio capture..."
-echo "  Uses ScreenCaptureKit (macOS 13+) — no BlackHole or Multi-Output"
+echo "  Uses ScreenCaptureKit (macOS 13+). No BlackHole or Multi-Output"
 echo "  Device required. On first launch you'll be prompted for Screen"
 echo "  Recording permission (used only for audio; no video is captured)."
 
@@ -84,11 +84,11 @@ if [ "$ARCH" = "arm64" ]; then
         if "$VENV_DIR/bin/python3" -c "import parakeet_mlx" 2>/dev/null; then
             echo "  ✓ Dependencies + parakeet-mlx ready (all SHA256-verified)"
         else
-            echo "  ✗ parakeet-mlx installed but failed to import — falling back to whisper"
+            echo "  ✗ parakeet-mlx installed but failed to import. Falling back to whisper"
             INSTALL_WHISPER=1
         fi
     else
-        echo "  ✗ Hash-verified install failed — falling back to whisper"
+        echo "  ✗ Hash-verified install failed. Falling back to whisper"
         INSTALL_WHISPER=1
     fi
     # Senko diarization (CoreML): a git dependency, so it lives outside the
@@ -97,9 +97,9 @@ if [ "$ARCH" = "arm64" ]; then
     "$VENV_DIR/bin/pip" install -q \
         "senko @ git+https://github.com/narcotic-sh/senko@ba0e12ed923ff49e8c2d9d9a3e42d7923cb95724" \
         && echo "  ✓ Senko diarization ready" \
-        || echo "  ⚠ Senko install failed — speaker identification uses the slower fallback."
+        || echo "  ⚠ Senko install failed. Speaker identification uses the slower fallback."
 else
-    echo "  ⚠ Detected Intel Mac (arch=$ARCH) — parakeet-mlx requires Apple Silicon."
+    echo "  ⚠ Detected Intel Mac (arch=$ARCH). parakeet-mlx requires Apple Silicon."
     echo "    Installing base deps + falling back to whisper.cpp."
     "$VENV_DIR/bin/pip" install -q \
         "PyQt6>=6.6.0" "pyobjc-framework-Cocoa>=10.0" "pillow>=10.0.0" \
@@ -174,7 +174,7 @@ echo -e "${GREEN}[6/6]${NC} Building Aloe Scribe.app via scripts/build-app.sh...
 # back to ad-hoc signing and macOS revokes Screen Recording + Microphone
 # permissions on every rebuild.
 bash "$PROJECT_DIR/scripts/create-signing-cert.sh" || \
-    echo "  ⚠ Signing-cert setup failed — continuing with ad-hoc signing (permissions will re-prompt after updates)."
+    echo "  ⚠ Signing-cert setup failed. continuing with ad-hoc signing (permissions will re-prompt after updates)."
 
 cd "$PROJECT_DIR"
 

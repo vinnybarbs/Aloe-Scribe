@@ -239,7 +239,7 @@ class RecordingsDialog(QDialog):
         self._on_transcribe = on_transcribe
         self._on_merge = on_merge
         self._output_dir = output_dir
-        self.setWindowTitle("Aloe Scribe — Recordings")
+        self.setWindowTitle("Aloe Scribe · Recordings")
         self.setStyleSheet(_STYLESHEET)
         self.resize(480, 420)
 
@@ -270,7 +270,7 @@ class RecordingsDialog(QDialog):
             )
             for w in wavs:
                 if not w.with_suffix(".md").exists():
-                    rows.append((w, f"{w.name}   — audio, needs transcription"))
+                    rows.append((w, f"{w.name}   · audio, needs transcription"))
             for m in mds[:30]:
                 rows.append((m, m.name))
         except Exception as e:
@@ -288,7 +288,7 @@ class RecordingsDialog(QDialog):
         self._merge_btn.setObjectName("btnSkip")
         self._merge_btn.setToolTip(
             "Select the parts of a meeting that got split by a quit or "
-            "crash — they combine into a single transcript on the real "
+            "crash. They combine into a single transcript on the real "
             "meeting timeline."
         )
         self._merge_btn.clicked.connect(self._do_merge)
@@ -391,7 +391,7 @@ class NotesWindow(QWidget):
         self._final_path: Optional[Path] = None
         self._known_names: list = []
 
-        self.setWindowTitle("Aloe Scribe — Meeting Notes")
+        self.setWindowTitle("Aloe Scribe · Meeting Notes")
         self.setObjectName("notesRoot")
         self.setStyleSheet(_STYLESHEET)
         self.resize(520, 640)
@@ -433,7 +433,7 @@ class NotesWindow(QWidget):
         # second (a one-click task while someone is talking). Not everyone on
         # the roster will speak — the roster itself still lands in the
         # transcript header.
-        att_caption = QLabel("Attendees — add everyone on the call")
+        att_caption = QLabel("Attendees · add everyone on the call")
         att_caption.setObjectName("deviceLabel")
         bot_l.addWidget(att_caption)
         self._attendee_edit = QLineEdit()
@@ -479,20 +479,20 @@ class NotesWindow(QWidget):
         self._undo_tag_btn = QPushButton("Undo tag")
         self._undo_tag_btn.setObjectName("btnSkip")
         self._undo_tag_btn.setToolTip(
-            "Retract the last speaker assignment (mis-clicks happen)"
+            "Retract the last speaker assignment"
         )
         self._undo_tag_btn.setVisible(False)
         self._undo_tag_btn.clicked.connect(self._undo_last_tag)
         status_row.addWidget(self._undo_tag_btn, 0)
         bot_l.addLayout(status_row)
 
-        notes_caption = QLabel("Notes — saved at the end of the transcript")
+        notes_caption = QLabel("Notes · saved at the end of the transcript")
         notes_caption.setObjectName("deviceLabel")
         bot_l.addWidget(notes_caption)
         self._notes_log = QPlainTextEdit()
         self._notes_log.setObjectName("notesPad")
         self._notes_log.setPlaceholderText(
-            "Your notes. Rough is fine — a few bullets carry the meeting.\n"
+            "Your notes. Rough is fine, a few bullets carry the meeting.\n"
             "Everything here lands in the transcript's Notes section."
         )
         self._notes_log.textChanged.connect(self._schedule_meta_push)
@@ -547,7 +547,7 @@ class NotesWindow(QWidget):
         chip per speaker label."""
         self._final_path = Path(path)
         self._transcript_caption.setText(
-            f"Final transcript — {self._final_path.name} (editable)"
+            f"Final transcript · {self._final_path.name} · editable"
         )
         self._transcript.setReadOnly(False)
         self._transcript.setPlainText(text)
@@ -717,7 +717,7 @@ class NotesWindow(QWidget):
         try:
             self._on_save(self._final_path, self._transcript.toPlainText())
             self._transcript_caption.setText(
-                f"Final transcript — {self._final_path.name} (saved)"
+                f"Final transcript · {self._final_path.name} · saved"
             )
         except Exception as e:
             QMessageBox.warning(self, "Aloe Scribe", f"Save failed: {e}")
@@ -1640,7 +1640,7 @@ class AloeScribeWindow(QMainWindow):
             return
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Aloe Scribe — Who was speaking?")
+        dlg.setWindowTitle("Aloe Scribe · Who was speaking?")
         layout = QVBoxLayout(dlg)
 
         head = QLabel(
@@ -1726,7 +1726,7 @@ class AloeScribeWindow(QMainWindow):
                 QMessageBox.information(
                     self,
                     "Aloe Scribe",
-                    "Choose your microphone first — the dropdown is still on "
+                    "Choose your microphone first. The dropdown is still on "
                     "“Select microphone…”.",
                 )
                 return
@@ -1988,8 +1988,8 @@ class AloeScribeApp:
                     self._window,
                     "Aloe Scribe",
                     "A transcript is still being created and quitting now "
-                    "cancels it.\n\nThe recording is kept either way — you "
-                    "can transcribe it later with “Transcribe a file…”.\n\n"
+                    "cancels it.\n\nThe recording is kept either way. You "
+                    "can transcribe it later from the Recordings browser.\n\n"
                     "Quit anyway?",
                     QMessageBox.StandardButton.Yes
                     | QMessageBox.StandardButton.Cancel,

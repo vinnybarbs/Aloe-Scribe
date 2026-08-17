@@ -54,7 +54,7 @@ if [ -f "$INSTALLED_CONFIG" ]; then
 elif [ ! -f "$REPO_CONFIG" ]; then
     # No installed app and no local config (fresh clone) — start from template.
     cp "$TEMPLATE" "$REPO_CONFIG"
-    echo "  No existing settings found — started from the template."
+    echo "  No existing settings found. Started from the template."
 else
     echo "  Using existing config/config.toml."
 fi
@@ -65,7 +65,7 @@ if grep -qE '^backend[[:space:]]*=[[:space:]]*"parakeet"' "$REPO_CONFIG" 2>/dev/
     # the GitHub-hosted local copy. No-op once the model is already local.
     bash "$PROJECT_DIR/scripts/fetch-model.sh"
 else
-    echo "  Backend is not parakeet — skipping."
+    echo "  Backend is not parakeet. Skipping."
 fi
 
 echo -e "${GREEN}[4/5]${NC} Syncing Python dependencies..."
@@ -78,19 +78,19 @@ if [ -x "$VENV_DIR/bin/pip" ]; then
     if [ "$(uname -m)" = "arm64" ]; then
         "$VENV_DIR/bin/pip" install -q --require-hashes -r "$PROJECT_DIR/requirements-mac.txt" \
             && echo "  Dependencies up to date." \
-            || echo -e "  ${YELLOW}⚠ Dependency sync failed — the app still works; optional features may be off. Re-run the update to retry.${NC}"
+            || echo -e "  ${YELLOW}⚠ Dependency sync failed. The app still works, but optional features may be off. Re-run the update to retry.${NC}"
         # Senko diarization (macOS, CoreML): a git dependency, so it lives
         # outside the hash-locked file — pinned to a commit instead.
         # Non-fatal: without it the app falls back to sherpa diarization.
         "$VENV_DIR/bin/pip" install -q \
             "senko @ git+https://github.com/narcotic-sh/senko@ba0e12ed923ff49e8c2d9d9a3e42d7923cb95724" \
             && echo "  Senko diarization ready." \
-            || echo -e "  ${YELLOW}⚠ Senko install failed — speaker identification uses the slower fallback.${NC}"
+            || echo -e "  ${YELLOW}⚠ Senko install failed. Speaker identification uses the slower fallback.${NC}"
     else
-        echo "  Intel Mac — skipping (whisper fallback has no new deps)."
+        echo "  Intel Mac. Skipping, the whisper fallback has no new deps."
     fi
 else
-    echo -e "  ${YELLOW}⚠ No venv at $VENV_DIR — run scripts/install-mac.sh for a full install.${NC}"
+    echo -e "  ${YELLOW}⚠ No venv at $VENV_DIR. run scripts/install-mac.sh for a full install.${NC}"
 fi
 
 echo -e "${GREEN}[5/5]${NC} Rebuilding and reinstalling the app (~1 minute)..."

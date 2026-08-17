@@ -1165,10 +1165,11 @@ def speaker_frontmatter_extras(
         if s.label not in seen:
             seen.append(s.label)
     scheme = (
-        "M* = voices on the local microphone (the in-room side; may be one or "
-        "several people, not necessarily the machine's owner). R* = voices on "
-        "system audio (remote participants). Match labels to names using the "
-        "calendar event and conversational context."
+        "M speakers were heard on the local microphone. That is the in-room "
+        "side and it may be one or several people, not necessarily the "
+        "machine's owner. R speakers were heard on system audio, meaning the "
+        "remote participants. Match labels to names using the calendar event "
+        "and conversational context."
     )
     lines = [
         f"speakers: [{', '.join(seen)}]",
@@ -1180,8 +1181,8 @@ def speaker_frontmatter_extras(
         lines.append(f"attendees: [{', '.join(roster)}]")
     if not diarized:
         lines.append(
-            'speaker_note: "Diarization unavailable for this recording — each '
-            'label is a channel, and may lump several voices together."'
+            'speaker_note: "Diarization was unavailable for this recording. Each '
+            'label is a channel and may lump several voices together."'
         )
     return lines
 

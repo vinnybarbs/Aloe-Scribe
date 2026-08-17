@@ -1,4 +1,4 @@
-# Aloe Scribe — Configuration
+# Aloe Scribe Configuration
 # Edit this file then restart Aloe Scribe
 
 [calendar]
@@ -15,22 +15,22 @@ poll_interval_minutes = 5
 
 [audio]
 # The mic is chosen in the app: the dropdown starts on "Select microphone…"
-# and Start requires a choice — auto-detect guessed wrong too often. Your
+# and Start requires a choice. Auto-detect guessed wrong too often. Your
 # selection persists here and is preselected whenever that device is
 # actually connected.
 # Linux:  Run `pactl list short sources` to list available sources
-# macOS:  System audio is captured via ScreenCaptureKit — no extra
+# macOS:  System audio is captured via ScreenCaptureKit, no extra
 #         hardware/virtual-device setup required.
 mic_source = ""
 system_source = ""  # macOS: "system" (default), "off" for mic-only. Linux: .monitor source.
 
 [transcriber]
 # Which transcription backend to use:
-#   "parakeet" — NVIDIA Parakeet TDT via parakeet-mlx (Apple Silicon).
+#   "parakeet"  NVIDIA Parakeet TDT via parakeet-mlx (Apple Silicon).
 #                Faster, less prone to silence-time hallucinations, better
 #                accuracy on technical English. ~700 MB model downloaded
 #                from HuggingFace on first run.
-#   "whisper"  — whisper.cpp via the binary in [whisper] below. Multilingual.
+#   "whisper"   whisper.cpp via the binary in [whisper] below. Multilingual.
 backend = "parakeet"
 
 # HuggingFace model id used when backend = "parakeet"
@@ -38,10 +38,10 @@ parakeet_model = "mlx-community/parakeet-tdt-0.6b-v3"
 
 # Speaker attribution. When true (default) and both mic + system audio are
 # captured, the recording keeps them as separate channels and transcript
-# lines are labeled by voice: M1, M2, ... for the local-mic side (the room —
-# may be several people), R1, R2, ... for remote participants on system
-# audio. Splitting voices on the same side uses sherpa-onnx diarization
-# (~36 MB of models auto-downloaded on first use); without it, labels fall
+# lines are labeled by voice: M1, M2, ... for the local-mic side, which may
+# be several people in a room, and R1, R2, ... for remote participants on system
+# audio. Splitting voices on the same side uses on-device diarization
+# (~36 MB of models auto-downloaded on first use). Without it, labels fall
 # back to one per side. Set false for the old unlabeled mixed-mono behavior.
 speaker_labels = true
 
@@ -51,8 +51,8 @@ speaker_labels = true
 # after-the-fact fixes.
 
 # Diarization clustering threshold. Lower splits voices more aggressively
-# (over-splits are easy to fix — type the same name for both in the naming
-# dialog); higher merges more (under-splits are NOT fixable afterward).
+# Over-splits are easy to fix, type the same name for both in the naming
+# dialog. Higher merges more, and under-splits are not fixable afterward.
 # Leave unset for the calibrated default (1.0).
 #diarize_threshold = 1.0
 
@@ -62,7 +62,7 @@ speaker_labels = true
 # macOS: build with Metal for GPU acceleration: cmake -B build -DWHISPER_METAL=ON
 binary_path = "~/whisper.cpp/build/bin/whisper-cli"
 
-# Model to use — larger = more accurate but slower
+# Model to use. Larger models are more accurate but slower.
 # tiny, base, small, medium, large-v3
 model = "small"
 

@@ -827,8 +827,8 @@ class AloeScribe:
                 dur_min = wav_path.stat().st_size / (32000 * channels) / 60
                 est = max(1, round(dur_min / 12))
                 progress(
-                    f"{round(dur_min)} min recording — labeling usually "
-                    f"takes about {est} min"
+                    f"{round(dur_min)} min recording. Labeling usually "
+                    f"takes about {est} min."
                 )
             except Exception:
                 pass
@@ -933,8 +933,8 @@ class AloeScribe:
             merged = speakers.merge_transcripts(list(texts.values()))
             if not merged:
                 self._show_error(
-                    "Could not merge — the selected files do not look like "
-                    "parts of one meeting (each needs a date header)."
+                    "Could not merge. The selected files do not look like "
+                    "parts of one meeting, each needs a date header."
                 )
                 return
             from datetime import timezone
@@ -1171,8 +1171,8 @@ class AloeScribe:
             if not recording_again:
                 self.tray.set_idle()
             self._show_error(
-                f"Transcription of {wav_path.name} failed — the audio is "
-                "kept. Use “Transcribe a file…” to retry it."
+                f"Transcription of {wav_path.name} failed. The audio is "
+                "kept, retry it from the Recordings browser."
             )
 
         if not recording_again:
@@ -1220,7 +1220,7 @@ class AloeScribe:
                 log.error(f"File contains no audio: {wav_path}")
                 self.tray.set_idle()
                 self._show_error(
-                    f"{wav_path.name} contains no audio — the recording it "
+                    f"{wav_path.name} contains no audio. The recording it "
                     "came from captured nothing, so there is nothing to "
                     "transcribe. You can delete the file."
                 )
@@ -1276,7 +1276,7 @@ class AloeScribe:
             self.tray.set_idle()
             self._show_error(
                 f"Could not transcribe {wav_path.name}. The file may be "
-                "corrupt or in an unsupported format — details are in "
+                "corrupt or in an unsupported format. Details are in "
                 "/tmp/aloe-scribe.log."
             )
 
