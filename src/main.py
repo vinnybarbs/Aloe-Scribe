@@ -251,6 +251,13 @@ class AloeScribe:
         self._meeting_tags: list = []
         self._meeting_notes_text: str = ""
         self._meeting_attendees: list = []
+        self._meeting_title: str = ""
+
+        # Local executive summary after the transcript lands (small on-device
+        # model via mlx-lm, subprocess-isolated).
+        scfg = config.get("summarizer", {})
+        self._summarizer_enabled = bool(scfg.get("enabled", True))
+        self._summarizer_model = scfg.get("model", "")
 
         # Initialise components
         self.recorder = Recorder(
@@ -726,9 +733,11 @@ class AloeScribe:
         # the self._* fields at the new meeting.
         job = {
             "md_path": getattr(self, "_md_path", None),
-            "title": (
+            "title": self._meeting_title
+            or (
                 self._current_meeting.title if self._current_meeting else "Recording"
             ),
+            "custom_title": bool(self._meeting_title),
             "when": getattr(self, "_recording_start", None) or datetime.now(),
             "draft_path": getattr(self, "_draft_path", None),
             "tags": list(self._meeting_tags),
@@ -895,13 +904,15 @@ class AloeScribe:
             log.debug(f"Speaker naming prompt skipped: {e}")
 
     def _on_meeting_meta_changed(
-        self, tags: list, notes_text: str, attendees: list = None
+        self, tags: list, notes_text: str, attendees: list = None,
+        title: str = "",
     ):
         """Debounced pushes from the notes window. Held for the stop job and
         crash-persisted next to the streaming draft."""
         self._meeting_tags = list(tags or [])
         self._meeting_notes_text = notes_text or ""
         self._meeting_attendees = list(attendees or [])
+        self._meeting_title = (title or "").strip()
         draft = getattr(self, "_draft_path", None)
         if draft is None:
             return
@@ -1023,6 +1034,37 @@ class AloeScribe:
             log.warning(f"Incremental assembly failed, falling back to batch: {e}")
             return ""
 
+    def _summarize_and_refresh(self, md_path: Path):
+        """Add the local executive summary AFTER the transcript is safe on
+        disk, so a summarizer failure can never cost content. Re-syncs and
+        refreshes the notes window when it lands."""
+        if not self._summarizer_enabled:
+            return
+        try:
+            import summarizer
+
+            model = summarizer.resolve_model(self._summarizer_model)
+            if not summarizer.summarize_file(md_path, model):
+                return
+            self.syncer.enqueue(md_path)
+            try:
+                if hasattr(self.tray, "notes_show_final"):
+                    self.tray.notes_show_final(
+                        md_path, md_path.read_text(encoding="utf-8")
+                    )
+            except Exception:
+                pass
+            try:
+                import notifications
+
+                notifications.send(
+                    "Aloe Scribe", f"Summary added: {md_path.name}"
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            log.warning(f"Summary step failed: {e}")
+
     def _mono_stt_input(self, wav_path: Path):
         """Return (stt_input, tmp_mono). For stereo split recordings stt_input
         is a hidden temp mono downmix (tmp_mono set — caller deletes it); mono
@@ -1062,6 +1104,16 @@ class AloeScribe:
             or getattr(self, "_md_path", None)
             or (self.output_dir / f"{wav_path.stem}.md")
         )
+        # A user-typed meeting title becomes the FILENAME too — retrieval
+        # agents rank on it, and "manual-recording" made every meeting look
+        # identical. Keep the timestamp prefix so files still sort.
+        if job.get("custom_title"):
+            try:
+                stamp = "-".join(md_path.stem.split("-")[:4])
+                slug = Meeting(title=title).slug()
+                md_path = md_path.with_name(f"{stamp}-{slug}.md")
+            except Exception:
+                pass
 
         # A recording that survived a hard app kill has a valid audio body but
         # an unfinalized (zero-size) header — patch it before reading.
@@ -1161,6 +1213,7 @@ class AloeScribe:
                     )
             except Exception:
                 pass
+            self._summarize_and_refresh(md_path)
         else:
             # Keep the WAV so the recording can be recovered. Surface the exact
             # command to re-run it.
@@ -1271,6 +1324,7 @@ class AloeScribe:
                     )
             except Exception:
                 pass
+            self._summarize_and_refresh(md_path)
         else:
             log.error(f"Could not transcribe {wav_path}")
             self.tray.set_idle()

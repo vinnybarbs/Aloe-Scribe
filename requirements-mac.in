@@ -10,3 +10,5 @@ parakeet-mlx==0.5.1
 # Speaker diarization for transcript speaker labels (optional at runtime —
 # the app degrades to channel-level labels without it).
 sherpa-onnx==1.13.4
+# Local executive summaries after each transcript (Qwen 3.5 4B via MLX).
+mlx-lm==0.31.3

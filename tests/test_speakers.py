@@ -162,6 +162,39 @@ def test_tag_reconciliation():
     print("ok: tag reconciliation")
 
 
+def test_document_structure_and_summary_insert():
+    """Docs lead with title/metadata, notes before transcript, and the
+    summarizer block slots in after metadata, idempotently."""
+    import summarizer
+    from datetime import datetime
+
+    labeled = [
+        speakers.LabeledSentence(0.0, 2.0, "hello there", "Vince"),
+        speakers.LabeledSentence(3.0, 5.0, "hi back", "R1"),
+    ]
+    md = speakers.render_document(
+        "Budget sync", datetime(2026, 8, 14, 10, 0).astimezone(),
+        "aloe-scribe-mac", labeled, [(None, "my note")], ["Vince", "Priya"], True,
+    )
+    assert "# Budget sync" in md
+    assert "Attendees: Vince, Priya" in md
+    assert md.index("## Notes") < md.index("## Transcript")
+    assert "[00:00] Vince: hello there" in md
+
+    block = "## Summary\nBullet one.\n\n## Action items\nVince: send the deck."
+    with_summary = summarizer.insert_summary(md, block)
+    assert with_summary.index("## Summary") < with_summary.index("## Notes")
+    assert "Vince: send the deck." in with_summary
+    # Re-inserting replaces rather than stacking.
+    again = summarizer.insert_summary(
+        with_summary, "## Summary\nNew bullet.\n\n## Action items\nNone captured."
+    )
+    assert again.count("## Summary") == 1
+    assert "Bullet one." not in again and "New bullet." in again
+    assert "[00:00] Vince: hello there" in again
+    print("ok: document structure + summary insert")
+
+
 def test_merge_transcripts():
     """Split-meeting merge: wall-clock offset, label renumbering, name
     passthrough, attendees union, notes shifting."""
@@ -394,6 +427,7 @@ def main():
         test_tag_reconciliation()
         test_incremental_chunker(tmp)
         test_assemble_labeled(tmp)
+        test_document_structure_and_summary_insert()
         test_merge_transcripts()
         test_attendees_frontmatter()
         test_notes_section()

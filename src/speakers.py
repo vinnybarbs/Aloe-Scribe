@@ -857,6 +857,26 @@ def _label_and_render(
         )
 
     diarized = any(t is not None for t in turns.values())
+    return render_document(title, when, source, labeled, notes, attendees, diarized)
+
+
+def render_document(
+    title: str,
+    when,
+    source: str,
+    labeled: list,
+    notes: Optional[list],
+    attendees: Optional[list],
+    diarized: bool,
+) -> str:
+    """The transcript document, structured for retrieval agents: a real title
+    and plain-text metadata lead the body, the user's notes come next (their
+    highest-signal content), and the raw timestamped dialogue is demoted to a
+    Transcript section at the end. A summarizer later inserts Summary and
+    Action items sections after the metadata (see summarizer.insert_summary).
+    Frontmatter stays for tools that read structured keys."""
+    from frontmatter import build_frontmatter
+
     duration = max((s.end for s in labeled), default=0.0)
     fm = build_frontmatter(
         title,
@@ -865,9 +885,30 @@ def _label_and_render(
         source=source,
         extras=speaker_frontmatter_extras(labeled, diarized, attendees),
     )
-    body = build_labeled_body(labeled)
+
+    when_local = when.astimezone() if hasattr(when, "astimezone") else when
+    meta = [
+        f"# {title}",
+        "",
+        f"{when_local.strftime('%A, %B')} {when_local.day}, {when_local.year} "
+        f"at {when_local.strftime('%H:%M')} · {max(1, round(duration / 60))} min",
+    ]
+    roster = [_sanitize_name(str(a)) for a in (attendees or [])]
+    roster = [a for a in roster if a]
+    if roster:
+        meta.append(f"Attendees: {', '.join(roster)}")
+    seen: list = []
+    for s in labeled:
+        if s.label not in seen:
+            seen.append(s.label)
+    meta.append(f"Speakers heard: {', '.join(seen)}")
+
     notes_md = build_notes_section(notes)
-    return fm + "\n\n" + body + notes_md + "\n"
+    body = build_labeled_body(labeled)
+    return (
+        fm + "\n\n" + "\n".join(meta) + notes_md
+        + "\n\n## Transcript\n\n" + body + "\n"
+    )
 
 
 def assemble_labeled_transcript(
@@ -1035,11 +1076,16 @@ def merge_transcripts(parts: list) -> Optional[str]:
             else []
         )
         m_src = re.search(r"^source: (.+)$", text, flags=re.M)
-        body, _, notes_part = text.partition("## Notes")
+        # Notes live in their own section (which may sit BEFORE the
+        # Transcript section in the current layout) — bound it by the next
+        # "## " header. Transcript lines carry a "Label:" and never match
+        # inside notes, so they can be collected from the whole document.
+        m_notes = re.search(r"^## Notes\n(.*?)(?=^## |\Z)", text, flags=re.M | re.S)
+        notes_part = m_notes.group(1) if m_notes else ""
         lines = []
-        for line in body.splitlines():
+        for line in text.splitlines():
             lm = re.match(_LINE_RE, line)
-            if lm:
+            if lm and not lm.group(3).startswith("#"):
                 sec = int(lm.group(1)) * 60 + int(lm.group(2))
                 lines.append((float(sec), lm.group(3), lm.group(4)))
         parsed.append({
@@ -1092,17 +1138,14 @@ def merge_transcripts(parts: list) -> Optional[str]:
     if not all_lines:
         return None
     all_lines.sort(key=lambda s: s.start)
-    duration = (parsed[-1]["end"] - base["date"]).total_seconds()
-    fm = build_frontmatter(
+    return render_document(
         base["title"],
         base["date"],
-        max(duration, all_lines[-1].start),
-        source=base["source"],
-        extras=speaker_frontmatter_extras(all_lines, True, attendees),
-    )
-    return (
-        fm + "\n\n" + build_labeled_body(all_lines)
-        + build_notes_section(all_notes) + "\n"
+        base["source"],
+        all_lines,
+        all_notes,
+        attendees,
+        True,
     )
 
 

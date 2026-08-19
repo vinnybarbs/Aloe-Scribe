@@ -103,7 +103,7 @@ Both grants attach to one `Aloe Scribe` identity, one row in System Settings, Pr
 ### Audio setup
 
 The idle screen has three controls:
-- Microphone dropdown, the real input devices. Auto-detect prefers an external mic over the built-in one.
+- Microphone dropdown, the real input devices. It starts on Select microphone and Start requires a choice, with your saved mic preselected whenever it is connected.
 - System audio dropdown, "On, capture system audio" (default) or "Off, mic only (in-person)".
 - Save transcripts to, with a Choose button that sets the output folder and writes it back to `config.toml`.
 
@@ -296,16 +296,31 @@ date: 2026-04-07T14:00:00-06:00
 end: 2026-04-07T14:32:00-06:00
 duration_min: 32
 source: aloe-scribe-mac
-speakers: [M1, R1, R2]
-speaker_key: "M* = voices on the local microphone ..."
+speakers: [Vince, Priya, R2]
+attendees: [Vince, Priya, Jordan]
 ---
 
-[00:00] M1: Hey, so today we need to discuss the timeline.
-[00:14] R1: Right, and the deadline for the API is next Friday.
-[00:21] R2: I can have the draft ready by Wednesday.
+# Weekly sync
+
+Tuesday, April 7, 2026 at 14:00 · 32 min
+Attendees: Vince, Priya, Jordan
+Speakers heard: Vince, Priya, R2
+
+## Summary
+Bullets a small local model writes after the transcript lands.
+
+## Action items
+Priya: send the revised SOW by Friday.
+
+## Notes
+Rough notes typed during the meeting.
+
+## Transcript
+[00:00] Vince: Hey, so today we need to discuss the timeline.
+[00:14] Priya: Right, the API deadline is next Friday.
 ```
 
-The header carries the meeting as a time window, so the agent can match the calendar event and infer attendees from there. Desktop and iOS write the same header fields. The speaker fields appear only on desktop recordings that captured both mic and system audio (see Speaker labels below).
+The document leads with what retrieval agents rank on: a real title (typed in the Meeting Notes window, it also names the file), plain-text metadata, the summary, and your notes, with the raw dialogue demoted to a Transcript section at the end. The Summary and Action items are written by a small local model (Qwen 3.5 4B via MLX) about ten seconds after the transcript lands. Nothing leaves the machine, the model reads your notes and tags so the summary reflects what you flagged, and `[summarizer] enabled = false` turns it off. The header carries the meeting as a time window, so the agent can match the calendar event and infer attendees from there. Desktop and iOS write the same header fields. The speaker fields appear only on desktop recordings that captured both mic and system audio (see Speaker labels below).
 
 ## Speaker labels
 

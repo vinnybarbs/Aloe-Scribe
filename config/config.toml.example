@@ -83,6 +83,16 @@ filename_format = "{date}-{time}-{title}.md"
 # checking speaker labels or re-transcribing later.
 keep_wav = false
 
+[summarizer]
+# Local executive summary written into the top of each transcript after it
+# lands (Summary and Action items sections). Runs a small on-device model
+# (Qwen 3.5 4B via MLX, ~2.9 GB fetched from this repo's GitHub Releases).
+# Nothing leaves the machine. Set false to skip summaries.
+enabled = true
+
+# Model override: a local folder path. Leave empty for the bundled default.
+model = ""
+
 [sync]
 # Set to true once rclone is configured
 enabled = false

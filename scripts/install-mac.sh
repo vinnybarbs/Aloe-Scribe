@@ -165,6 +165,11 @@ if [ "$WANT_WHISPER" != "1" ]; then
     bash "$PROJECT_DIR/scripts/fetch-model.sh"
 fi
 
+# Summarizer model (local executive summaries). Non-fatal: without it the
+# app skips summaries and everything else works.
+bash "$PROJECT_DIR/scripts/fetch-summarizer.sh" || \
+    echo "  ⚠ Summarizer model fetch failed. Summaries are off until it succeeds."
+
 # -----------------------------------------------------------
 # 6. Build native .app bundle
 # -----------------------------------------------------------

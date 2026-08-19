@@ -29,9 +29,10 @@ OPTIONS = {
         "recorder",
         "transcriber",
         "transcriber_parakeet",
-        # Imported lazily inside functions (speaker labeling), so py2app's
-        # static graph never sees it — force it in like tty below.
+        # Imported lazily inside functions (speaker labeling, summaries), so
+        # py2app's static graph never sees them — force them in like tty below.
         "speakers",
+        "summarizer",
         "syncer",
         "notifications",
         "ui_mac",

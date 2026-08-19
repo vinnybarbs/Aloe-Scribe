@@ -86,11 +86,13 @@ if [ -x "$VENV_DIR/bin/pip" ]; then
             "senko @ git+https://github.com/narcotic-sh/senko@ba0e12ed923ff49e8c2d9d9a3e42d7923cb95724" \
             && echo "  Senko diarization ready." \
             || echo -e "  ${YELLOW}⚠ Senko install failed. Speaker identification uses the slower fallback.${NC}"
+        bash "$PROJECT_DIR/scripts/fetch-summarizer.sh" || \
+            echo -e "  ${YELLOW}⚠ Summarizer model fetch failed. Summaries are off until it succeeds.${NC}"
     else
         echo "  Intel Mac. Skipping, the whisper fallback has no new deps."
     fi
 else
-    echo -e "  ${YELLOW}⚠ No venv at $VENV_DIR. run scripts/install-mac.sh for a full install.${NC}"
+    echo -e "  ${YELLOW}⚠ No venv at $VENV_DIR. Run scripts/install-mac.sh for a full install.${NC}"
 fi
 
 echo -e "${GREEN}[5/5]${NC} Rebuilding and reinstalling the app (~1 minute)..."

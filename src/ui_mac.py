@@ -397,6 +397,17 @@ class NotesWindow(QWidget):
         self.resize(520, 640)
 
         layout = QVBoxLayout(self)
+
+        # Meeting title: becomes the transcript's H1, its filename, and the
+        # name retrieval agents find it by. "Manual Recording" everywhere
+        # made every meeting look identical to search.
+        self._title_edit = QLineEdit()
+        self._title_edit.setPlaceholderText(
+            "Meeting title (used for the transcript name)"
+        )
+        self._title_edit.textChanged.connect(self._schedule_meta_push)
+        layout.addWidget(self._title_edit)
+
         split = QSplitter(Qt.Orientation.Vertical)
         layout.addWidget(split)
 
@@ -523,6 +534,7 @@ class NotesWindow(QWidget):
         self._notes_log.setPlainText("")
         self._tag_status.setText("")
         self._speaker_combo.clear()
+        self._title_edit.setText("")
 
     def _elapsed(self) -> float:
         if self._meeting_start is None:
@@ -640,6 +652,7 @@ class NotesWindow(QWidget):
                     list(self._tags),
                     self._notes_log.toPlainText(),
                     list(self._known_names),
+                    self._title_edit.text().strip(),
                 )
             except Exception:
                 pass
