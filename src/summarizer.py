@@ -213,6 +213,15 @@ def insert_summary(md_text: str, block: str) -> str:
             + "\n\n" + block + "\n\n"
             + cleaned[m.start():]
         )
+    # Legacy layout with no section headers (old fallback files): the block
+    # goes ABOVE the dialogue, never appended below it.
+    m = re.search(r"^\[\d+:\d\d\] ", cleaned, flags=re.M)
+    if m:
+        return (
+            cleaned[: m.start()].rstrip()
+            + "\n\n" + block + "\n\n## Transcript\n\n"
+            + cleaned[m.start():]
+        )
     return cleaned.rstrip() + "\n\n" + block + "\n"
 
 
