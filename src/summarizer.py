@@ -35,11 +35,15 @@ MAX_INPUT_CHARS = 90_000
 
 _PROMPT = """You are writing the executive summary block for a meeting transcript. Rules: plain business English. Never use em dashes, semicolons, arrows, or the words leverage, utilize, robust, seamless, streamline, holistic, foster, delve. Lead with the point. Use the speaker names that appear in the transcript. The Notes section, when present, is the user's own notes and outranks the dialogue for what mattered.
 
-Produce exactly two sections and nothing else:
+Produce exactly four sections and nothing else:
 ## Summary
-3 to 6 short bullets covering what the meeting was about and what was decided or learned.
+4 to 7 short bullets covering what the meeting was about, where each major thread stands, and what was learned.
+## Decisions
+What is now settled, one line each. If nothing was decided, write exactly: None captured.
 ## Action items
-One line per real commitment from the conversation. {owner_rule} If there are no commitments, write exactly: None captured.
+One line per real commitment from the conversation. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
+## Open questions
+Unresolved questions the meeting raised or left open, one line each. If none, write exactly: None captured.
 
 Document:
 """
@@ -67,7 +71,7 @@ messages = [{"role": "user", "content": prompt_text}]
 text = tokenizer.apply_chat_template(
     messages, add_generation_prompt=True, enable_thinking=False
 )
-out = generate(model, tokenizer, prompt=text, max_tokens=600, verbose=False)
+out = generate(model, tokenizer, prompt=text, max_tokens=900, verbose=False)
 sys.stdout.write(out)
 """
 
@@ -147,26 +151,33 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
         log.warning("Summarizer output had no Summary section. Discarded.")
         return None
     block = out[idx:].strip()
-    # Cut anything trailing after the Action items section.
-    m = re.search(r"^## (?!Summary|Action items)", block, flags=re.M)
+    # Cut anything trailing after the expected sections.
+    m = re.search(
+        r"^## (?!Summary|Decisions|Action items|Open questions)",
+        block,
+        flags=re.M,
+    )
     if m:
         block = block[: m.start()].strip()
     if not has_speakers:
         # Small models keep attaching names anyway (usually lifted from the
-        # meeting title). Enforce ownerlessness mechanically: drop a leading
-        # "<Proper Name> will" from every action line, with or without the
-        # requested prefix.
-        name = r"[A-Z][\w.'-]*(?: [A-Z][\w.'-]*){0,3}"
-        block = re.sub(
-            rf"(?m)^(\s*[*-]?\s*)Owner unclear:\s*{name} will\s+",
-            r"\1Owner unclear: ",
-            block,
-        )
-        block = re.sub(
-            rf"(?m)^(\s*[*-]?\s*){name} will\s+",
-            r"\1Owner unclear: ",
-            block,
-        )
+        # meeting title). Enforce ownerlessness mechanically — scoped to the
+        # Action items section so Decisions bullets are untouched.
+        m = re.search(r"^## Action items\n(.*?)(?=^## |\Z)", block, flags=re.M | re.S)
+        if m:
+            name = r"[A-Z][\w.'-]*(?: [A-Z][\w.'-]*){0,3}"
+            section = m.group(1)
+            section = re.sub(
+                rf"(?m)^(\s*[*-]?\s*)Owner unclear:\s*{name} will\s+",
+                r"\1Owner unclear: ",
+                section,
+            )
+            section = re.sub(
+                rf"(?m)^(\s*[*-]?\s*){name} will\s+",
+                r"\1Owner unclear: ",
+                section,
+            )
+            block = block[: m.start(1)] + section + block[m.end(1):]
     return block
 
 
@@ -189,13 +200,12 @@ def insert_summary(md_text: str, block: str) -> str:
     if attendees and block.startswith("## Summary"):
         head, _, rest = block.partition("\n")
         block = f"{head}\n{attendees}\n{rest.lstrip()}"
-    # Drop any existing Summary / Action items sections.
-    cleaned = re.sub(
-        r"^## Summary\n.*?(?=^## |\Z)", "", md_text, flags=re.M | re.S
-    )
-    cleaned = re.sub(
-        r"^## Action items\n.*?(?=^## |\Z)", "", cleaned, flags=re.M | re.S
-    )
+    # Drop any existing generated sections so re-summarizing replaces them.
+    cleaned = md_text
+    for section in ("Summary", "Decisions", "Action items", "Open questions"):
+        cleaned = re.sub(
+            rf"^## {section}\n.*?(?=^## |\Z)", "", cleaned, flags=re.M | re.S
+        )
     m = re.search(r"^## ", cleaned, flags=re.M)
     if m:
         return (
