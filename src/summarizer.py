@@ -43,7 +43,7 @@ Produce exactly four sections and nothing else:
 ## Decisions
 What is now settled, one line each. If nothing was decided, write exactly: None captured.
 ## Action items
-One line per real commitment from the conversation. Each item must be SPECIFIC: name who a call or introduction is with and what it is about, even when the responsible owner is unclear. Never merge separate workstreams into one item. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
+Only lines tagged [commitment] in the extracted list qualify, never [topic] lines: topics discussed and ideas explored are not action items. At most 8 items, the most consequential. Prefer items where someone agreed to set up, share, schedule, or reach out. Each item must be SPECIFIC: name who a call or introduction is with and what it is about, even when the responsible owner is unclear. Never merge separate workstreams into one item, never write "the speaker", describe the step itself. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
 ## Open questions
 Unresolved questions the meeting raised or left open, one line each. If none, write exactly: None captured.
 
@@ -59,8 +59,10 @@ _OWNER_RULE_LABELED = (
 )
 _OWNER_RULE_UNLABELED = (
     "This transcript does not identify who is speaking, so ownership cannot "
-    "be known. Start EVERY action item with \"Owner unclear:\" and never "
-    "attach any person's name, including names from the meeting title."
+    "be asserted. Start EVERY action item with \"Owner unclear:\" — but DO "
+    "name the specific people involved in the step itself (who a call or "
+    "introduction is with, who was said to take it on), phrased as "
+    "\"Name to do X\" rather than as a claim of ownership."
 )
 
 _WORKER = r"""
@@ -78,21 +80,32 @@ def run(prompt, max_tokens):
     )
     return generate(model, tokenizer, prompt=text, max_tokens=max_tokens, verbose=False)
 
-# Pass 1: pull the concrete facts out with names attached, close to verbatim.
-extracted = run(job["extract"] + job["doc"], 700)
-# Pass 2: write the block from that evidence, with the document for context.
+# Map: extract facts from SHORT transcript windows — a 4B is reliable over
+# ten minutes of dialogue and loses details across forty-five.
+extractions = []
+for chunk in job["chunks"]:
+    extractions.append(run(job["extract"] + chunk, 350))
+evidence = "\n".join(e.strip() for e in extractions if e.strip())
+# Reduce: write the block from the combined evidence plus the document head
+# (title, metadata, the user's notes) — a small, dense final context.
 final = run(
     job["final"]
     + "\n\nExtracted commitments and threads (your source of truth):\n"
-    + extracted
-    + "\n\nDocument:\n"
-    + job["doc"],
+    + evidence
+    + "\n\nMeeting metadata and the user's own notes:\n"
+    + job["head"],
     900,
 )
 sys.stdout.write(final)
 """
 
-_EXTRACT_PROMPT = """From the meeting document below, list every explicit commitment, planned call or introduction, decision, stated deadline, and unresolved question. One line each. For each line name the SPECIFIC people involved and the specific subject, quoting or closely paraphrasing the transcript. Extraction only, no interpretation, no filler.
+_EXTRACT_PROMPT = """From the meeting document below, extract facts one line each, naming the SPECIFIC people involved and the specific subject, quoting or closely paraphrasing the transcript. Prefix every line with exactly one tag:
+[commitment] an agreed next step, planned call, or introduction someone will actually do
+[decision] something now settled
+[deadline] a stated date or timeframe
+[question] an unresolved question
+[topic] a subject discussed or an idea explored with no agreement to act
+Extraction only, no interpretation, no filler.
 
 Document:
 """
@@ -123,6 +136,44 @@ def _worker_python() -> Optional[str]:
     return None
 
 
+def _split_for_extraction(doc: str, chunk_chars: int = 12_000) -> tuple:
+    """(head, transcript_chunks): head is everything before the dialogue
+    (frontmatter, title, metadata, notes); the dialogue splits into
+    ~10-minute windows on line boundaries. Short windows are where a 4B
+    extracts reliably — across a whole hour it loses the middle."""
+    import re as _re
+
+    m = _re.search(r"^## Transcript$", doc, flags=_re.M)
+    if m:
+        head, transcript = doc[: m.start()], doc[m.end():]
+    else:
+        d = _re.search(r"^\[\d+:\d\d\] ", doc, flags=_re.M)
+        if d:
+            head, transcript = doc[: d.start()], doc[d.start():]
+        else:
+            return doc, [doc]
+    lines = transcript.splitlines(keepends=True)
+    overlap_chars = 800
+    chunks, cur, size = [], [], 0
+    for line in lines:
+        cur.append(line)
+        size += len(line)
+        if size >= chunk_chars:
+            chunks.append("".join(cur))
+            # Overlap: carry the tail lines into the next window so a
+            # thought spanning the boundary appears whole in at least one.
+            tail, tail_size = [], 0
+            for prev in reversed(cur):
+                tail.insert(0, prev)
+                tail_size += len(prev)
+                if tail_size >= overlap_chars:
+                    break
+            cur, size = tail, tail_size
+    if cur and (not chunks or "".join(cur) != chunks[-1][-len("".join(cur)):]):
+        chunks.append("".join(cur))
+    return head, chunks or [transcript]
+
+
 def generate_summary(md_text: str, model: str) -> Optional[str]:
     """Run the model over the document; returns the '## Summary ...' block or
     None on any failure. Subprocess-isolated, bounded at five minutes."""
@@ -151,10 +202,16 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
 
         from speakers import worker_env
 
+        head, chunks = _split_for_extraction(doc)
         proc = subprocess.run(
             [exe, "-c", _WORKER, model],
             input=_json.dumps(
-                {"extract": _EXTRACT_PROMPT, "final": prompt, "doc": doc}
+                {
+                    "extract": _EXTRACT_PROMPT,
+                    "final": prompt,
+                    "head": head,
+                    "chunks": chunks,
+                }
             ),
             capture_output=True,
             text=True,
@@ -193,14 +250,16 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
         if m:
             name = r"[A-Z][\w.'-]*(?: [A-Z][\w.'-]*){0,3}"
             section = m.group(1)
+            # Reframe "Name will X" as "Name to X" under the prefix —
+            # the name stays as PARTICIPANT info, just not as an owner claim.
             section = re.sub(
-                rf"(?m)^(\s*[*-]?\s*)Owner unclear:\s*{name} will\s+",
-                r"\1Owner unclear: ",
+                rf"(?m)^(\s*[*-]?\s*)Owner unclear:\s*({name}) will\s+",
+                r"\1Owner unclear: \2 to ",
                 section,
             )
             section = re.sub(
-                rf"(?m)^(\s*[*-]?\s*){name} will\s+",
-                r"\1Owner unclear: ",
+                rf"(?m)^(\s*[*-]?\s*)({name}) will\s+",
+                r"\1Owner unclear: \2 to ",
                 section,
             )
             block = block[: m.start(1)] + section + block[m.end(1):]
