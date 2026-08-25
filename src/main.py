@@ -596,7 +596,7 @@ class AloeScribe:
                     # it records so Stop costs seconds, not minutes. Stereo
                     # split recordings only; batch remains the fallback.
                     if (
-                        channels == 2
+                        channels in (1, 2)
                         and self._speaker_labels
                         and hasattr(self.transcriber, "transcribe_sentences")
                     ):
@@ -811,8 +811,6 @@ class AloeScribe:
         try:
             import speakers
 
-            if _wav_header_channels(wav_path) != 2:
-                return ""
             if self._diarizer is None:
                 self._diarizer = speakers.Diarizer(
                     threshold=self._diarize_threshold

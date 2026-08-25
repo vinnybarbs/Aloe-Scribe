@@ -195,6 +195,46 @@ def test_document_structure_and_summary_insert():
     print("ok: document structure + summary insert")
 
 
+def test_mono_inperson_labeling(tmp: Path):
+    """In-person (mic-only, mono) recordings get labeled too: the whole
+    meeting is the mic side, tags still name people."""
+    wav = tmp / "inperson.wav"
+    rng = np.random.default_rng(9)
+    n = 6 * RATE
+    mono = np.zeros(n, dtype=np.float32)
+    mono[: 2 * RATE] = rng.standard_normal(2 * RATE).astype(np.float32) * 0.3
+    mono[3 * RATE : 5 * RATE] = (
+        rng.standard_normal(2 * RATE).astype(np.float32) * 0.3
+    )
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes((mono * 32767).astype(np.int16).tobytes())
+
+    per_channel = {
+        speakers.CH_MIC: [
+            {"start": 0.2, "end": 1.8, "text": "hello room"},
+            {"start": 3.2, "end": 4.8, "text": "reply in room"},
+        ],
+        speakers.CH_SYSTEM: [],
+    }
+    class StubDiarizer:
+        def diarize_file(self, wav_path):
+            return [(0.0, 2.5, 0), (3.0, 5.5, 1)]
+
+    md = speakers.assemble_labeled_transcript(
+        wav, per_channel, StubDiarizer(), "Standup",
+        __import__("datetime").datetime.now(),
+        "aloe-scribe-mac", tags=[(0.9, "Vince")],
+    )
+    assert md is not None
+    assert "[00:00] Vince: hello room" in md
+    assert "M1: reply in room" in md  # untagged voice keeps a mic label
+    assert "## Transcript" in md
+    print("ok: mono in-person labeling")
+
+
 def test_merge_transcripts():
     """Split-meeting merge: wall-clock offset, label renumbering, name
     passthrough, attendees union, notes shifting."""
@@ -428,6 +468,7 @@ def main():
         test_incremental_chunker(tmp)
         test_assemble_labeled(tmp)
         test_document_structure_and_summary_insert()
+        test_mono_inperson_labeling(tmp)
         test_merge_transcripts()
         test_attendees_frontmatter()
         test_notes_section()

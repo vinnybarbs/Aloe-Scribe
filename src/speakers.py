@@ -68,6 +68,18 @@ def default_cache_dir() -> Path:
     return Path.home() / ".cache" / "aloe-scribe" / "diarization"
 
 
+def worker_env() -> dict:
+    """Environment for venv worker subprocesses. The frozen app's process
+    carries py2app's PYTHONHOME/PYTHONPATH pointing INTO the bundle — a venv
+    interpreter inheriting them loads the bundle's stdlib extensions and
+    dies (the summarizer hit the bundle's _ssl.so this way). Strip them."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE")
+    }
+
+
 # ---------------------------------------------------------------------------
 # WAV helpers
 # ---------------------------------------------------------------------------
@@ -136,6 +148,30 @@ def load_split_channels(path: Path):
     mic = data[:, CH_MIC].astype(np.float32) / 32768.0
     system = data[:, CH_SYSTEM].astype(np.float32) / 32768.0
     return mic, system, rate
+
+
+def load_channels(path: Path):
+    """Load a recording for the labeling pipeline. Stereo split recordings
+    return (mic, system, rate). MONO recordings (in-person mode, mic only)
+    return (samples, empty, rate) — the whole meeting is the mic side, so
+    diarization and live tags still work and labels come out as M1, M2, ...
+    Returns None only when the file is unreadable."""
+    import numpy as np
+
+    loaded = load_split_channels(path)
+    if loaded is not None:
+        return loaded
+    try:
+        with wave.open(str(path), "rb") as w:
+            if w.getnchannels() != 1 or w.getsampwidth() != 2:
+                return None
+            rate = w.getframerate()
+            raw = w.readframes(w.getnframes())
+    except Exception as e:
+        log.warning(f"Could not read WAV {path}: {e}")
+        return None
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    return samples, np.zeros(0, dtype=np.float32), rate
 
 
 def downmix_to_mono_wav(src: Path, dst: Path) -> Optional[Path]:
@@ -373,6 +409,7 @@ class Diarizer:
                         [exe, "-c", "import senko"],
                         capture_output=True,
                         timeout=120,
+                        env=worker_env(),
                     ).returncode
                     == 0
                 )
@@ -396,6 +433,7 @@ class Diarizer:
                     capture_output=True,
                     text=True,
                     timeout=1800,
+                    env=worker_env(),
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     return [
@@ -421,6 +459,7 @@ class Diarizer:
                     capture_output=True,
                     text=True,
                     timeout=1800,
+                    env=worker_env(),
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     return [
@@ -599,9 +638,13 @@ class IncrementalChunker:
         """Interleaved int16 PCM from the growing WAV (stereo split only)."""
         import numpy as np
 
-        if channels != 2 or not raw:
+        if not raw or channels not in (1, 2):
             return
         arr = np.frombuffer(raw, dtype=np.int16)
+        if channels == 1:
+            # In-person mono: everything is the mic side.
+            self._buffers[CH_MIC].append(arr.astype(np.float32) / 32768.0)
+            return
         arr = arr[: (len(arr) // 2) * 2].reshape(-1, 2)
         self._buffers[CH_MIC].append(
             arr[:, CH_MIC].astype(np.float32) / 32768.0
@@ -737,7 +780,7 @@ def build_labeled_transcript(
             pass
 
     note("Analyzing audio channels…")
-    loaded = load_split_channels(wav_path)
+    loaded = load_channels(wav_path)
     if loaded is None:
         return None
     mic, system, rate = loaded
@@ -937,7 +980,7 @@ def assemble_labeled_transcript(
         except Exception:
             pass
 
-    loaded = load_split_channels(wav_path)
+    loaded = load_channels(wav_path)
     if loaded is None:
         return None
     mic, system, rate = loaded

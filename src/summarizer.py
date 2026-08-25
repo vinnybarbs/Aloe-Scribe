@@ -100,12 +100,15 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
             + doc[-half:]
         )
     try:
+        from speakers import worker_env
+
         proc = subprocess.run(
             [exe, "-c", _WORKER, model],
             input=_PROMPT + doc,
             capture_output=True,
             text=True,
             timeout=300,
+            env=worker_env(),
         )
     except Exception as e:
         log.warning(f"Summarizer subprocess error: {e}")
