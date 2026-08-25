@@ -35,13 +35,15 @@ MAX_INPUT_CHARS = 90_000
 
 _PROMPT = """You are writing the executive summary block for a meeting transcript. Rules: plain business English. Never use em dashes, semicolons, arrows, or the words leverage, utilize, robust, seamless, streamline, holistic, foster, delve. Lead with the point. Use the speaker names that appear in the transcript. The Notes section, when present, is the user's own notes and outranks the dialogue for what mattered.
 
+You will be given an extracted list of commitments and threads, then the full document. The extracted list is your source of truth for the Decisions, Action items, and Open questions sections.
+
 Produce exactly four sections and nothing else:
 ## Summary
 4 to 7 short bullets covering what the meeting was about, where each major thread stands, and what was learned.
 ## Decisions
 What is now settled, one line each. If nothing was decided, write exactly: None captured.
 ## Action items
-One line per real commitment from the conversation. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
+One line per real commitment from the conversation. Each item must be SPECIFIC: name who a call or introduction is with and what it is about, even when the responsible owner is unclear. Never merge separate workstreams into one item. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
 ## Open questions
 Unresolved questions the meeting raised or left open, one line each. If none, write exactly: None captured.
 
@@ -62,17 +64,37 @@ _OWNER_RULE_UNLABELED = (
 )
 
 _WORKER = r"""
+import json
 import sys
 model_path = sys.argv[1]
-prompt_text = sys.stdin.read()
+job = json.loads(sys.stdin.read())
 from mlx_lm import load, generate
 model, tokenizer = load(model_path)
-messages = [{"role": "user", "content": prompt_text}]
-text = tokenizer.apply_chat_template(
-    messages, add_generation_prompt=True, enable_thinking=False
+
+def run(prompt, max_tokens):
+    messages = [{"role": "user", "content": prompt}]
+    text = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, enable_thinking=False
+    )
+    return generate(model, tokenizer, prompt=text, max_tokens=max_tokens, verbose=False)
+
+# Pass 1: pull the concrete facts out with names attached, close to verbatim.
+extracted = run(job["extract"] + job["doc"], 700)
+# Pass 2: write the block from that evidence, with the document for context.
+final = run(
+    job["final"]
+    + "\n\nExtracted commitments and threads (your source of truth):\n"
+    + extracted
+    + "\n\nDocument:\n"
+    + job["doc"],
+    900,
 )
-out = generate(model, tokenizer, prompt=text, max_tokens=900, verbose=False)
-sys.stdout.write(out)
+sys.stdout.write(final)
+"""
+
+_EXTRACT_PROMPT = """From the meeting document below, list every explicit commitment, planned call or introduction, decision, stated deadline, and unresolved question. One line each. For each line name the SPECIFIC people involved and the specific subject, quoting or closely paraphrasing the transcript. Extraction only, no interpretation, no filler.
+
+Document:
 """
 
 
@@ -125,14 +147,18 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
         owner_rule=_OWNER_RULE_LABELED if has_speakers else _OWNER_RULE_UNLABELED
     )
     try:
+        import json as _json
+
         from speakers import worker_env
 
         proc = subprocess.run(
             [exe, "-c", _WORKER, model],
-            input=prompt + doc,
+            input=_json.dumps(
+                {"extract": _EXTRACT_PROMPT, "final": prompt, "doc": doc}
+            ),
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=420,
             env=worker_env(),
         )
     except Exception as e:
