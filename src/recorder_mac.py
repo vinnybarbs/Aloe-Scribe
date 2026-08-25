@@ -79,7 +79,13 @@ def _list_avfoundation_devices() -> dict:
 
 
 # Virtual/software audio devices to skip when auto-detecting a mic.
-_VIRTUAL_DEVICES = {"blackhole", "microsoft teams", "zoomaudio", "zoom audio"}
+# Also filters Continuity phone/tablet mics: merely opening one (the idle
+# meter's fallback did) makes the phone chime in the user's pocket, and a
+# phone mic is never the right choice for a meeting recorder.
+_VIRTUAL_DEVICES = {
+    "blackhole", "microsoft teams", "zoomaudio", "zoom audio",
+    "iphone", "ipad",
+}
 
 
 def _is_virtual(name: str) -> bool:

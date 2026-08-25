@@ -185,6 +185,9 @@ def test_document_structure_and_summary_insert():
     with_summary = summarizer.insert_summary(md, block)
     assert with_summary.index("## Summary") < with_summary.index("## Notes")
     assert "Vince: send the deck." in with_summary
+    # The roster repeats as the first line of the Summary section, so a
+    # copy-paste of just the summary carries who was there.
+    assert "## Summary\nAttendees: Vince, Priya\nBullet one." in with_summary
     # Re-inserting replaces rather than stacking.
     again = summarizer.insert_summary(
         with_summary, "## Summary\nNew bullet.\n\n## Action items\nNone captured."

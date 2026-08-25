@@ -170,10 +170,25 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     return block
 
 
+def _attendees_line(md_text: str) -> Optional[str]:
+    m = re.search(r"^attendees: \[([^\]]*)\]$", md_text, flags=re.M)
+    if not m or not m.group(1).strip():
+        return None
+    return f"Attendees: {m.group(1).strip()}"
+
+
 def insert_summary(md_text: str, block: str) -> str:
     """Place the Summary/Action items block after the document's metadata,
     before the first existing section. Idempotent: an earlier summary block
-    is replaced, so re-summarizing never stacks duplicates."""
+    is replaced, so re-summarizing never stacks duplicates.
+
+    The attendee roster is repeated as the first line INSIDE the Summary
+    section — people copy-paste just the summary, and it should carry who
+    was in the meeting."""
+    attendees = _attendees_line(md_text)
+    if attendees and block.startswith("## Summary"):
+        head, _, rest = block.partition("\n")
+        block = f"{head}\n{attendees}\n{rest.lstrip()}"
     # Drop any existing Summary / Action items sections.
     cleaned = re.sub(
         r"^## Summary\n.*?(?=^## |\Z)", "", md_text, flags=re.M | re.S
