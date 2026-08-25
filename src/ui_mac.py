@@ -938,7 +938,7 @@ class AloeScribeWindow(QMainWindow):
         self._stop_meters()
 
         try:
-            from recorder_mac import _resolve_device, _find_default_mic, _helper_path
+            from recorder_mac import _find_default_mic_name, _helper_path
         except Exception as e:
             log.warning(f"Cannot import recorder_mac helpers: {e}")
             return
@@ -949,10 +949,12 @@ class AloeScribeWindow(QMainWindow):
         # from the streaming loop's own reads via meter_levels().
         self._mic_meter = None
         if self._state != "recording":
-            mic_idx = _resolve_device(self._selected_mic) or _find_default_mic()
-            if mic_idx:
+            # Open by NAME — resolving an index needs a device enumeration,
+            # which wakes Continuity phone mics.
+            mic_name = self._selected_mic or _find_default_mic_name()
+            if mic_name:
                 self._mic_meter = make_avfoundation_meter(
-                    mic_idx,
+                    f":{mic_name}",
                     lambda lvl: self._signals.mic_level.emit(lvl),
                 )
                 if self._mic_meter and not self._mic_meter.start():

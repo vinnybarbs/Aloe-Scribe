@@ -27,6 +27,7 @@ import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import CoreAudio
 
 // MARK: - Helpers
 
@@ -41,6 +42,63 @@ func saturateMix(_ a: Int16, _ b: Int16) -> Int16 {
     if sum > 32_767 { return 32_767 }
     if sum < -32_768 { return -32_768 }
     return Int16(sum)
+}
+
+// MARK: - Passive input listing (CoreAudio, no AVFoundation discovery)
+
+func listCoreAudioInputNames() -> [String] {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(
+        AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
+    ) == noErr else { return [] }
+    let count = Int(size) / MemoryLayout<AudioObjectID>.size
+    var ids = [AudioObjectID](repeating: 0, count: count)
+    guard AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids
+    ) == noErr else { return [] }
+
+    var names: [String] = []
+    for id in ids {
+        // Input-capable devices only: check for input-scope streams.
+        var streamsAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain)
+        var streamsSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &streamsAddr, 0, nil, &streamsSize) == noErr,
+              streamsSize > 0 else { continue }
+
+        // Skip Continuity iPhone/iPad mics by TRANSPORT TYPE — custom phone
+        // names ("VMoney Microphone") defeat any name-based filter, and a
+        // meeting recorder should never touch a phone mic.
+        var transportAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport: UInt32 = 0
+        var transportSize = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectGetPropertyData(id, &transportAddr, 0, nil, &transportSize, &transport) == noErr {
+            if transport == kAudioDeviceTransportTypeContinuityCaptureWired
+                || transport == kAudioDeviceTransportTypeContinuityCaptureWireless {
+                continue
+            }
+        }
+
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var cfName: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &nameAddr, 0, nil, &nameSize, &cfName) == noErr,
+              let name = cfName?.takeRetainedValue() as String? else { continue }
+        names.append(name)
+    }
+    return names
 }
 
 // MARK: - CLI parsing
@@ -83,6 +141,15 @@ func parseArgs() -> Args {
             splitChannels = true
         case "--meter":
             meterMode = true
+        case "--list-inputs":
+            // Passive CoreAudio listing: prints input device names WITHOUT
+            // instantiating AVFoundation discovery, which wakes Continuity
+            // iPhone mics (the phone chimes in the user's pocket just from
+            // being enumerated).
+            for name in listCoreAudioInputNames() {
+                print(name)
+            }
+            exit(0)
         case "--sample-rate", "-r":
             i += 1
             guard i < argv.count, let v = Double(argv[i]) else {
@@ -581,18 +648,18 @@ final class MicCapture: @unchecked Sendable {
             throw NSError(domain: "aloe", code: 40, userInfo: [NSLocalizedDescriptionKey:
                 "ffmpeg not found. Install with: brew install ffmpeg"])
         }
-        guard let idx = MicCapture.resolveAVFoundationIndex(name: deviceName, ffmpegPath: ffmpeg) else {
-            throw NSError(domain: "aloe", code: 41, userInfo: [NSLocalizedDescriptionKey:
-                "Mic device '\(deviceName)' not found via avfoundation"])
-        }
-        eprint("Mic device: \(deviceName) → avfoundation index :\(idx)")
+        // Open by NAME directly. Pre-resolving an index required an
+        // avfoundation enumeration, which wakes Continuity iPhone mics (the
+        // phone chimes just from being listed). Name matching skips that;
+        // index resolution remains as the failure fallback below.
+        eprint("Mic device: \(deviceName) (opening by name)")
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: ffmpeg)
         proc.arguments = [
             "-hide_banner", "-loglevel", "error",
             "-f", "avfoundation",
-            "-i", ":\(idx)",
+            "-i", ":\(deviceName)",
             "-ar", "\(Int(mixer.format.sampleRate))",
             "-ac", "1",
             "-f", "s16le",
@@ -608,6 +675,43 @@ final class MicCapture: @unchecked Sendable {
         let fd = stdoutPipe.fileHandleForReading.fileDescriptor
         readQueue.async { [weak self] in
             self?.readLoop(fd: fd)
+        }
+
+        // Fallback: if name matching failed (ffmpeg exits immediately),
+        // resolve the avfoundation index the old way and relaunch. Only this
+        // failure path pays the enumeration cost.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self, let p = self.process,
+                  !p.isRunning, !self.stopFlag else { return }
+            eprint("Mic open by name failed — resolving index (fallback)")
+            guard let idx = MicCapture.resolveAVFoundationIndex(
+                name: self.deviceName, ffmpegPath: ffmpeg
+            ) else {
+                eprint("Mic device '\(self.deviceName)' not found via avfoundation")
+                return
+            }
+            let retry = Process()
+            retry.executableURL = URL(fileURLWithPath: ffmpeg)
+            retry.arguments = [
+                "-hide_banner", "-loglevel", "error",
+                "-f", "avfoundation",
+                "-i", ":\(idx)",
+                "-ar", "\(Int(self.mixer.format.sampleRate))",
+                "-ac", "1",
+                "-f", "s16le",
+                "-",
+            ]
+            let retryPipe = Pipe()
+            retry.standardOutput = retryPipe
+            retry.standardError = FileHandle.standardError
+            do { try retry.run() } catch {
+                eprint("Mic fallback launch failed: \(error.localizedDescription)")
+                return
+            }
+            self.process = retry
+            eprint("Mic ffmpeg restarted via index :\(idx) (PID \(retry.processIdentifier))")
+            let retryFD = retryPipe.fileHandleForReading.fileDescriptor
+            self.readQueue.async { self.readLoop(fd: retryFD) }
         }
     }
 

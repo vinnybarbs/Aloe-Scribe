@@ -131,9 +131,11 @@ def make_pulseaudio_meter(source: str, on_level: Callable[[float], None]) -> Opt
     return AudioMeter(cmd, on_level)
 
 
-def make_avfoundation_meter(device_index: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
-    """macOS: read an avfoundation device (e.g. ':2') via ffmpeg."""
-    if not device_index:
+def make_avfoundation_meter(device_spec: str, on_level: Callable[[float], None]) -> Optional[AudioMeter]:
+    """macOS: read an avfoundation device via ffmpeg. `device_spec` is
+    ':<name>' or ':<index>' — passing the NAME avoids the device enumeration
+    that index resolution needs (enumeration wakes Continuity phone mics)."""
+    if not device_spec:
         return None
     # ffmpeg writes raw s16le PCM to stdout. -nostdin so it doesn't fight the
     # parent for tty/stdin input. -loglevel error keeps stderr quiet.
@@ -142,7 +144,7 @@ def make_avfoundation_meter(device_index: str, on_level: Callable[[float], None]
         "-nostdin",
         "-loglevel", "error",
         "-f", "avfoundation",
-        "-i", device_index,
+        "-i", device_spec,
         "-ar", str(AudioMeter.RATE),
         "-ac", "1",
         "-f", "s16le",

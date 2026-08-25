@@ -46,6 +46,28 @@ def _helper_path() -> Path:
 # avfoundation device enumeration (UI dropdown only — capture goes via SCK)
 # ---------------------------------------------------------------------------
 
+def _list_input_names() -> list:
+    """Input device names via the helper's passive CoreAudio listing — no
+    AVFoundation discovery, so Continuity phone mics are neither woken (the
+    pocket chime) nor listed. Falls back to ffmpeg enumeration only if the
+    helper is unavailable."""
+    helper = _helper_path()
+    try:
+        if helper.exists():
+            proc = subprocess.run(
+                [str(helper), "--list-inputs"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if proc.returncode == 0:
+                return [
+                    n.strip() for n in proc.stdout.splitlines() if n.strip()
+                ]
+    except Exception as e:
+        log.debug(f"Passive input listing failed: {e}")
+    return [name for _i, name in
+            _list_avfoundation_devices().get("audio", [])]
+
+
 def _list_avfoundation_devices() -> dict:
     """
     Parse ffmpeg -f avfoundation -list_devices to find audio devices.
@@ -146,21 +168,18 @@ def _find_default_mic_name() -> str:
     virtual devices and prefers external mics over the built-in. Empty string
     if no input is available.
     """
-    devices = _list_avfoundation_devices()
-    physical = [(idx, name) for idx, name in devices.get("audio", [])
-                if not _is_virtual(name)]
+    physical = [n for n in _list_input_names() if not _is_virtual(n)]
     if not physical:
         log.warning("No physical microphone found")
         return ""
     # Prefer external mics (USB / wired) over built-in.
-    for _idx, name in physical:
+    for name in physical:
         lower = name.lower()
         if "macbook" not in lower and "built" not in lower:
             log.info(f"Auto-detected mic: {name}")
             return name
-    name = physical[0][1]
-    log.info(f"Auto-detected mic: {name}")
-    return name
+    log.info(f"Auto-detected mic: {physical[0]}")
+    return physical[0]
 
 
 def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -175,9 +194,8 @@ def list_sources() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     captures the desktop's mix, regardless of which BlackHole / Multi-Output
     Device is configured.
     """
-    devices = _list_avfoundation_devices()
     mics = []
-    for _idx, name in devices.get("audio", []):
+    for name in _list_input_names():
         if _is_virtual(name):
             continue
         mics.append((name, name))
