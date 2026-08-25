@@ -1032,6 +1032,41 @@ class AloeScribe:
             log.warning(f"Incremental assembly failed, falling back to batch: {e}")
             return ""
 
+    def _append_plain_extras(self, md_path: Path, title: str, when, job: dict):
+        """The plain fallback writes only frontmatter and dialogue. Bring it
+        up to the standard document: H1 title, the attendee roster, and the
+        user's typed notes. They wrote those during the meeting, and losing
+        them to a fallback path is not acceptable."""
+        try:
+            import speakers
+
+            text = md_path.read_text(encoding="utf-8")
+            if text.startswith("# ") or "\n# " in text[:400]:
+                return  # already structured
+            end = text.find("---", 3)
+            if end < 0:
+                return
+            end = text.find("\n", end) + 1
+            meta = [f"# {title}"]
+            roster = [
+                str(a).strip() for a in (job.get("attendees") or [])
+                if str(a).strip()
+            ]
+            if roster:
+                meta.append("")
+                meta.append(f"Attendees: {', '.join(roster)}")
+            notes_md = speakers.build_notes_section(
+                speakers.parse_notes_log(job.get("notes_text", ""))
+            )
+            body = text[end:].lstrip("\n")
+            md_path.write_text(
+                text[:end] + "\n" + "\n".join(meta) + notes_md
+                + "\n\n## Transcript\n\n" + body,
+                encoding="utf-8",
+            )
+        except Exception as e:
+            log.warning(f"Could not append meeting extras: {e}")
+
     def _summarize_and_refresh(self, md_path: Path):
         """Add the local executive summary AFTER the transcript is safe on
         disk, so a summarizer failure can never cost content. Re-syncs and
@@ -1158,6 +1193,10 @@ class AloeScribe:
                     meeting_title=title,
                     meeting_date=when,
                 )
+                if result:
+                    # Fallback output still carries the user's meeting
+                    # artifacts (title H1, roster, typed notes).
+                    self._append_plain_extras(md_path, title, when, job)
             except Exception as e:
                 log.error(f"Transcription raised: {e}")
 

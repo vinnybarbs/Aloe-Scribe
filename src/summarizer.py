@@ -39,10 +39,23 @@ Produce exactly two sections and nothing else:
 ## Summary
 3 to 6 short bullets covering what the meeting was about and what was decided or learned.
 ## Action items
-One line per real commitment from the conversation, each starting with the owner's name. If none, write exactly: None captured.
+One line per real commitment from the conversation. {owner_rule} If there are no commitments, write exactly: None captured.
 
 Document:
 """
+
+_OWNER_RULE_LABELED = (
+    "Start a line with the owner's name ONLY when a transcript line carries "
+    "that person's name as its speaker label and that speaker states the "
+    "commitment themselves. The meeting title and attendee list are never "
+    "evidence of ownership. When the owner is not certain, start the line "
+    "with \"Owner unclear:\" instead. Never guess a name."
+)
+_OWNER_RULE_UNLABELED = (
+    "This transcript does not identify who is speaking, so ownership cannot "
+    "be known. Start EVERY action item with \"Owner unclear:\" and never "
+    "attach any person's name, including names from the meeting title."
+)
 
 _WORKER = r"""
 import sys
@@ -99,12 +112,20 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
             + "\n\n[transcript truncated for length]\n\n"
             + doc[-half:]
         )
+    # A transcript without speaker-labeled lines can never yield named
+    # owners — small models otherwise invent them from the title or roster.
+    has_speakers = bool(
+        re.search(r"^\[\d+:\d\d\] [A-Za-z][\w .'-]*?: ", md_text, flags=re.M)
+    )
+    prompt = _PROMPT.format(
+        owner_rule=_OWNER_RULE_LABELED if has_speakers else _OWNER_RULE_UNLABELED
+    )
     try:
         from speakers import worker_env
 
         proc = subprocess.run(
             [exe, "-c", _WORKER, model],
-            input=_PROMPT + doc,
+            input=prompt + doc,
             capture_output=True,
             text=True,
             timeout=300,
@@ -130,6 +151,22 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     m = re.search(r"^## (?!Summary|Action items)", block, flags=re.M)
     if m:
         block = block[: m.start()].strip()
+    if not has_speakers:
+        # Small models keep attaching names anyway (usually lifted from the
+        # meeting title). Enforce ownerlessness mechanically: drop a leading
+        # "<Proper Name> will" from every action line, with or without the
+        # requested prefix.
+        name = r"[A-Z][\w.'-]*(?: [A-Z][\w.'-]*){0,3}"
+        block = re.sub(
+            rf"(?m)^(\s*[*-]?\s*)Owner unclear:\s*{name} will\s+",
+            r"\1Owner unclear: ",
+            block,
+        )
+        block = re.sub(
+            rf"(?m)^(\s*[*-]?\s*){name} will\s+",
+            r"\1Owner unclear: ",
+            block,
+        )
     return block
 
 
