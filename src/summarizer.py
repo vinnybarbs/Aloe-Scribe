@@ -33,15 +33,15 @@ LOCAL_MODEL_DIRNAME = "qwen3.5-4b-mlx-4bit"
 # beyond this many characters (~2.5 h of speech).
 MAX_INPUT_CHARS = 90_000
 
-_PROMPT = """You are writing the executive summary block for a meeting transcript. Rules: plain business English. Never use em dashes, semicolons, arrows, or the words leverage, utilize, robust, seamless, streamline, holistic, foster, delve. Lead with the point. Use the speaker names that appear in the transcript. The Notes section, when present, is the user's own notes and outranks the dialogue for what mattered.
+_PROMPT = """You are writing the executive summary block for a meeting transcript. Rules: plain business English. Never use em dashes, semicolons, arrows, or the words leverage, utilize, robust, seamless, streamline, holistic, foster, delve. Lead with the point. Use the speaker names that appear in the transcript. Never reproduce raw spoken phrasing as an item, describe the step in plain terms. The Notes section, when present, is the user's own notes and outranks the dialogue for what mattered.
 
 You will be given an extracted list of commitments and threads, then the full document. The extracted list is your source of truth for the Decisions, Action items, and Open questions sections.
 
 Produce exactly four sections and nothing else:
 ## Summary
-4 to 7 short bullets covering what the meeting was about, where each major thread stands, and what was learned.
+4 to 7 short bullets, every bullet starting with "- ". Never paragraph form. Cover what the meeting was about, where each major thread stands, and what was learned.
 ## Decisions
-What is now settled, one line each. If nothing was decided, write exactly: None captured.
+A decision is a choice the participants made in THIS meeting about what they will do. Background facts, org news, and things learned are not decisions and belong in the Summary. State each decision directly, never beginning with "It was decided that", "It is settled that", or "The team". If nothing was decided, write exactly: None captured.
 ## Action items
 Only lines tagged [commitment] in the extracted list qualify, never [topic] lines: topics discussed and ideas explored are not action items. At most 8 items, the most consequential. Prefer items where someone agreed to set up, share, schedule, or reach out. Each item must be SPECIFIC: name who a call or introduction is with and what it is about, even when the responsible owner is unclear. Never merge separate workstreams into one item, never write "the speaker", describe the step itself. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
 ## Open questions
@@ -96,6 +96,33 @@ final = run(
     + job["head"],
     900,
 )
+
+# Verify pass: small models keep promoting background facts to "decisions".
+# Ask about each candidate line and drop the ones that fail.
+import re as _re
+m = _re.search(r"^## Decisions\n(.*?)(?=^## |\Z)", final, flags=_re.M | _re.S)
+if m:
+    kept = []
+    for line in m.group(1).splitlines():
+        s = line.strip().lstrip("-*• ").strip()
+        if not s:
+            continue
+        if s == "None captured.":
+            kept = []
+            break
+        verdict = run(
+            "Statement: " + s
+            + "\n\nIn the meeting evidence below, did the participants "
+            "AGREE IN THIS MEETING to do this, choosing it as their own "
+            "course of action? Background facts, org news, opinions, and "
+            "things merely learned do not count. Answer with exactly one "
+            "word, yes or no.\n\nEvidence:\n" + evidence,
+            10,
+        )
+        if verdict.strip().lower().startswith("yes"):
+            kept.append("- " + s)
+    body = "\n".join(kept) if kept else "None captured."
+    final = final[: m.start(1)] + body + "\n\n" + final[m.end(1):]
 sys.stdout.write(final)
 """
 
@@ -174,6 +201,19 @@ def _split_for_extraction(doc: str, chunk_chars: int = 12_000) -> tuple:
     return head, chunks or [transcript]
 
 
+def _summary_is_bulleted(text: str) -> bool:
+    """Structural lint: the Summary section must be bullets, not prose."""
+    m = re.search(r"^## Summary\n(.*?)(?=^## |\Z)", text, flags=re.M | re.S)
+    if not m:
+        return False
+    lines = [
+        l for l in m.group(1).splitlines()
+        if l.strip() and not l.startswith("Attendees:")
+    ]
+    bullets = [l for l in lines if l.lstrip().startswith(("-", "*", "•"))]
+    return len(bullets) >= 3 and len(bullets) >= len(lines) - 1
+
+
 def generate_summary(md_text: str, model: str) -> Optional[str]:
     """Run the model over the document; returns the '## Summary ...' block or
     None on any failure. Subprocess-isolated, bounded at five minutes."""
@@ -197,37 +237,52 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     prompt = _PROMPT.format(
         owner_rule=_OWNER_RULE_LABELED if has_speakers else _OWNER_RULE_UNLABELED
     )
-    try:
-        import json as _json
+    head, chunks = _split_for_extraction(doc)
 
-        from speakers import worker_env
+    def _attempt(final_prompt: str) -> Optional[str]:
+        try:
+            import json as _json
 
-        head, chunks = _split_for_extraction(doc)
-        proc = subprocess.run(
-            [exe, "-c", _WORKER, model],
-            input=_json.dumps(
-                {
-                    "extract": _EXTRACT_PROMPT,
-                    "final": prompt,
-                    "head": head,
-                    "chunks": chunks,
-                }
-            ),
-            capture_output=True,
-            text=True,
-            timeout=420,
-            env=worker_env(),
+            from speakers import worker_env
+
+            proc = subprocess.run(
+                [exe, "-c", _WORKER, model],
+                input=_json.dumps(
+                    {
+                        "extract": _EXTRACT_PROMPT,
+                        "final": final_prompt,
+                        "head": head,
+                        "chunks": chunks,
+                    }
+                ),
+                capture_output=True,
+                text=True,
+                timeout=420,
+                env=worker_env(),
+            )
+        except Exception as e:
+            log.warning(f"Summarizer subprocess error: {e}")
+            return None
+        if proc.returncode != 0:
+            log.warning(
+                f"Summarizer failed (rc={proc.returncode}): "
+                f"{(proc.stderr or '').strip()[-300:]}"
+            )
+            return None
+        return proc.stdout
+
+    out = _attempt(prompt)
+    if out is not None and not _summary_is_bulleted(out):
+        log.info("Summary came back as prose. Retrying with format reminder.")
+        retry = _attempt(
+            prompt
+            + "\nREMINDER: the Summary section MUST be 4 to 7 bullets, each "
+            "line starting with \"- \". Paragraph form is a failure.\n"
         )
-    except Exception as e:
-        log.warning(f"Summarizer subprocess error: {e}")
+        if retry is not None and _summary_is_bulleted(retry):
+            out = retry
+    if out is None:
         return None
-    if proc.returncode != 0:
-        log.warning(
-            f"Summarizer failed (rc={proc.returncode}): "
-            f"{(proc.stderr or '').strip()[-300:]}"
-        )
-        return None
-    out = proc.stdout
     # Strip any preamble the model produced before the block.
     idx = out.find("## Summary")
     if idx < 0:
@@ -242,6 +297,21 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     )
     if m:
         block = block[: m.start()].strip()
+    # Strip narration prefixes the model keeps sneaking in ("It is settled
+    # that X" reads as machine hedging; "X" is the statement).
+    block = re.sub(
+        r"(?m)^(\s*(?:[-*•]\s*)?)(?:It (?:is|was) (?:settled|decided|agreed)"
+        r"(?: that| to)?[,:]?\s+|The (?:team|group) (?:decided|agreed) to\s+)(\w)",
+        lambda mm: mm.group(1) + mm.group(2).upper(),
+        block,
+    )
+    # "It is unresolved whether X" is a question wearing a trench coat:
+    # "Whether X" matches the clean bullets around it.
+    block = re.sub(
+        r"(?m)^(\s*(?:[-*•]\s*)?)It (?:is|was|remains) unresolved,?\s+(\w)",
+        lambda mm: mm.group(1) + mm.group(2).upper(),
+        block,
+    )
     if not has_speakers:
         # Small models keep attaching names anyway (usually lifted from the
         # meeting title). Enforce ownerlessness mechanically — scoped to the
@@ -260,6 +330,15 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
             section = re.sub(
                 rf"(?m)^(\s*[*-]?\s*)({name}) will\s+",
                 r"\1Owner unclear: \2 to ",
+                section,
+            )
+            # "The speaker" is banned but persistent — collapse it into the
+            # ownerless prefix: "Owner unclear: The speaker agrees to share X"
+            # becomes "Owner unclear: share X".
+            section = re.sub(
+                r"(?mi)^(\s*[*-]?\s*Owner unclear:\s*)[Tt]he speaker\s+"
+                r"(?:proposes|commits? to|agrees? to|is (?:to|assigned to)|will|offers? to)\s*",
+                r"\1",
                 section,
             )
             block = block[: m.start(1)] + section + block[m.end(1):]
