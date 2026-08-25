@@ -110,16 +110,26 @@ if m:
         if s == "None captured.":
             kept = []
             break
+        # Classification framing beats yes/no here: small models have a
+        # strong yes-bias when asked "did they agree?", but sort fact from
+        # decision reliably when shown examples of each.
         verdict = run(
+            "Classify the statement as fact or decision.\n"
+            "A decision is a course of action the meeting participants "
+            "chose during the meeting. A fact is background information, "
+            "org news, an opinion, or something merely learned.\n\n"
+            "Examples of fact: 'The company has its own CEO, named Sam.' "
+            "'They use Grafana, Splunk, and DataDog.' 'The budget was cut "
+            "last quarter.'\n"
+            "Examples of decision: 'Focus the proposal on discovery work "
+            "first.' 'Alex will handle the technical side while Kim owns "
+            "the business case.'\n\n"
             "Statement: " + s
-            + "\n\nIn the meeting evidence below, did the participants "
-            "AGREE IN THIS MEETING to do this, choosing it as their own "
-            "course of action? Background facts, org news, opinions, and "
-            "things merely learned do not count. Answer with exactly one "
-            "word, yes or no.\n\nEvidence:\n" + evidence,
+            + "\n\nMeeting evidence:\n" + evidence
+            + "\n\nAnswer with exactly one word, fact or decision.",
             10,
         )
-        if verdict.strip().lower().startswith("yes"):
+        if verdict.strip().lower().startswith("decision"):
             kept.append("- " + s)
     body = "\n".join(kept) if kept else "None captured."
     final = final[: m.start(1)] + body + "\n\n" + final[m.end(1):]
