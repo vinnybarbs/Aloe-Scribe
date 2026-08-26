@@ -94,7 +94,7 @@ final = run(
     + evidence
     + "\n\nMeeting metadata and the user's own notes:\n"
     + job["head"],
-    900,
+    1400,
 )
 
 # Verify pass: small models keep promoting background facts to "decisions".
@@ -307,6 +307,13 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     )
     if m:
         block = block[: m.start()].strip()
+    # If generation hit the token cap the block ends mid-sentence. Drop a
+    # trailing line with no terminal punctuation rather than shipping it.
+    tail = block.rstrip().rsplit("\n", 1)
+    if len(tail) == 2 and tail[1].strip() and not tail[1].rstrip().endswith(
+        (".", "!", "?", ":", '"', "'", ")")
+    ) and not tail[1].lstrip().startswith("##"):
+        block = tail[0].rstrip()
     # Strip narration prefixes the model keeps sneaking in ("It is settled
     # that X" reads as machine hedging; "X" is the statement).
     block = re.sub(
