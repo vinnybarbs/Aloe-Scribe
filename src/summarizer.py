@@ -317,6 +317,22 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     )
     if m:
         block = block[: m.start()].strip()
+    # The model sometimes loops, emitting the same items several times
+    # (repetitive transcripts trigger it). Keep the first copy of each line.
+    seen_lines: set = set()
+    kept_lines = []
+    for line in block.splitlines():
+        key = line.strip().lower().rstrip(".")
+        if (
+            key
+            and not line.lstrip().startswith("##")
+            and key != "none captured"
+        ):
+            if key in seen_lines:
+                continue
+            seen_lines.add(key)
+        kept_lines.append(line)
+    block = "\n".join(kept_lines)
     # If generation hit the token cap the block ends mid-sentence. Drop a
     # trailing line with no terminal punctuation rather than shipping it.
     tail = block.rstrip().rsplit("\n", 1)

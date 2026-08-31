@@ -560,34 +560,54 @@ def write_channel_wav(samples, rate: int, dst: Path) -> Path:
     return dst
 
 
-def dedupe_echo(mic_sentences: list, sys_sentences: list) -> list:
-    """Drop mic-channel sentences that are acoustic echo of remote speech.
+def dedupe_echo(mic_sentences: list, sys_sentences: list) -> tuple:
+    """Drop duplicated speech that crossed channels, both directions.
 
-    On setups without echo cancellation (laptop speakers + built-in mic) the
-    mic hears the remote participants too, so the same words appear on both
-    channels at the same time. A mic sentence that overlaps a system sentence
-    in time AND says nearly the same thing is the speaker's echo, not the
-    local person — keep the clean system copy only.
+    Two physical paths create duplicates, told apart by timing:
+
+    1. Acoustic bleed, near-zero offset: the machine plays remote audio out
+       its speakers next to its mic, so remote speech lands on both channels
+       at the same instant. The system copy is authoritative — drop the mic
+       copy. (A room voice cannot reach the system channel this way; system
+       audio is a digital capture with no acoustic path.)
+    2. Network echo, delayed seconds: room speech goes out through the call
+       (a second laptop in the room with a live mic, or far-end speakers
+       leaking into their mic) and comes BACK on the system channel — or the
+       reverse. The round trip makes the echo the LATER copy, so keep the
+       earlier one whichever channel it is on.
+
+    Returns (mic_kept, sys_kept).
     """
     import difflib
 
-    out = []
-    for m in mic_sentences:
+    def _sim(a: str, b: str) -> float:
+        return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+    drop_mic, drop_sys = set(), set()
+    for mi, m in enumerate(mic_sentences):
         dur = max(0.2, m[1] - m[0])
-        is_echo = False
-        for s in sys_sentences:
-            overlap = min(m[1], s[1]) - max(m[0], s[0])
-            if overlap / dur < 0.5:
+        for si, s in enumerate(sys_sentences):
+            if si in drop_sys:
                 continue
-            sim = difflib.SequenceMatcher(
-                None, m[2].lower(), s[2].lower()
-            ).ratio()
-            if sim > 0.65:
-                is_echo = True
-                break
-        if not is_echo:
-            out.append(m)
-    return out
+            overlap = min(m[1], s[1]) - max(m[0], s[0])
+            if overlap / dur >= 0.5:
+                if _sim(m[2], s[2]) > 0.65:
+                    drop_mic.add(mi)
+                    break
+                continue
+            # Delayed duplicate: only trusted on substantial sentences —
+            # short acknowledgements ("Yeah.", "Okay.") legitimately repeat.
+            gap = abs(m[0] - s[0])
+            if gap <= 30.0 and len(m[2]) >= 25 and len(s[2]) >= 25:
+                if _sim(m[2], s[2]) > 0.75:
+                    if m[0] <= s[0]:
+                        drop_sys.add(si)
+                    else:
+                        drop_mic.add(mi)
+                        break
+    mic_kept = [m for i, m in enumerate(mic_sentences) if i not in drop_mic]
+    sys_kept = [s for i, s in enumerate(sys_sentences) if i not in drop_sys]
+    return mic_kept, sys_kept
 
 
 def _parse_sentences(sentences) -> list:
@@ -824,7 +844,7 @@ def build_labeled_transcript(
             sentences = transcribe_sentences(tmp_wavs[channel])
             per_channel[channel] = _parse_sentences(sentences)
 
-        per_channel[CH_MIC] = dedupe_echo(
+        per_channel[CH_MIC], per_channel[CH_SYSTEM] = dedupe_echo(
             per_channel[CH_MIC], per_channel[CH_SYSTEM]
         )
         if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
@@ -1009,7 +1029,9 @@ def assemble_labeled_transcript(
         CH_MIC: _parse_sentences(per_channel_sentences.get(CH_MIC) or []),
         CH_SYSTEM: _parse_sentences(per_channel_sentences.get(CH_SYSTEM) or []),
     }
-    per_channel[CH_MIC] = dedupe_echo(per_channel[CH_MIC], per_channel[CH_SYSTEM])
+    per_channel[CH_MIC], per_channel[CH_SYSTEM] = dedupe_echo(
+        per_channel[CH_MIC], per_channel[CH_SYSTEM]
+    )
     if not per_channel[CH_MIC] and not per_channel[CH_SYSTEM]:
         return None
 
