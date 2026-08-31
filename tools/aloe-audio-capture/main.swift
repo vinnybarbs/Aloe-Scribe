@@ -592,10 +592,93 @@ final class MicCapture: @unchecked Sendable {
     private let readQueue = DispatchQueue(label: "aloe.mic.read", qos: .userInteractive)
     private var stopFlag = false
     private(set) var buffersReceived: Int = 0
+    private var engine: AVAudioEngine?
 
     init(mixer: Mixer, deviceName: String) {
         self.mixer = mixer
         self.deviceName = deviceName
+    }
+
+    static func defaultInputDeviceName() -> String? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var devID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                         &addr, 0, nil, &size, &devID) == noErr,
+              devID != kAudioObjectUnknown else { return nil }
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var name: Unmanaged<CFString>?
+        var nsize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(devID, &nameAddr, 0, nil, &nsize, &name) == noErr,
+              let cf = name?.takeRetainedValue() else { return nil }
+        return cf as String
+    }
+
+    /// Echo-cancelled capture through Apple voice processing. Only used when
+    /// the requested mic IS the default input device: voice processing binds
+    /// to the default input/output pair, and overriding devices under it is
+    /// where the known macOS breakage lives. Verified on this machine: it
+    /// cancels audio played by OTHER processes (a Teams call through the
+    /// speakers no longer lands on the mic channel).
+    private func startVPIO() throws {
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        try input.setVoiceProcessingEnabled(true)
+        if #available(macOS 14.0, *) {
+            // Never duck other apps' audio: the meeting itself plays there.
+            input.voiceProcessingOtherAudioDuckingConfiguration =
+                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+                    enableAdvancedDucking: false, duckingLevel: .min)
+        }
+        let inFmt = input.outputFormat(forBus: 0)
+        guard let outFmt = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                          sampleRate: mixer.format.sampleRate,
+                                          channels: 1,
+                                          interleaved: true),
+              let converter = AVAudioConverter(from: inFmt, to: outFmt) else {
+            throw NSError(domain: "aloe", code: 41, userInfo: [
+                NSLocalizedDescriptionKey: "Could not build VPIO converter"])
+        }
+        let ratio = outFmt.sampleRate / inFmt.sampleRate
+        input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] buf, _ in
+            guard let self = self, !self.stopFlag else { return }
+            let cap = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 16
+            guard let out = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: cap) else { return }
+            var fed = false
+            var err: NSError?
+            converter.convert(to: out, error: &err) { _, status in
+                if fed { status.pointee = .noDataNow; return nil }
+                fed = true
+                status.pointee = .haveData
+                return buf
+            }
+            let n = Int(out.frameLength)
+            guard n > 0, let ch = out.int16ChannelData?[0] else { return }
+            let samples = Array(UnsafeBufferPointer(start: ch, count: n))
+            self.buffersReceived += 1
+            if self.buffersReceived == 1 {
+                eprint("MicCapture(VPIO): first buffer received (\(n) frames)")
+            }
+            self.mixer.feedMic(samples)
+        }
+        engine.prepare()
+        try engine.start()
+        self.engine = engine
+        eprint("Mic: echo-cancelled capture via Apple voice processing")
+    }
+
+    private func stopVPIO() {
+        if let e = engine {
+            e.inputNode.removeTap(onBus: 0)
+            e.stop()
+            engine = nil
+        }
     }
 
     static func findFFmpeg() -> String? {
@@ -644,6 +727,35 @@ final class MicCapture: @unchecked Sendable {
 
     func start() throws {
         eprint("MicCapture.start() entered")
+        // Prefer Apple voice processing (echo cancellation) when the chosen
+        // mic is the system default input. ALOE_NO_AEC=1 forces raw capture.
+        if ProcessInfo.processInfo.environment["ALOE_NO_AEC"] == nil,
+           let defName = MicCapture.defaultInputDeviceName(),
+           defName.lowercased() == deviceName.lowercased() {
+            do {
+                try startVPIO()
+                // If voice processing yields no audio (quirky device, odd
+                // aggregate), fall back to raw ffmpeg capture automatically.
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    guard let self = self, !self.stopFlag,
+                          self.buffersReceived == 0 else { return }
+                    eprint("VPIO produced no audio in 3s — falling back to raw capture")
+                    self.stopVPIO()
+                    try? self.startFFmpeg()
+                }
+                return
+            } catch {
+                eprint("VPIO unavailable (\(error.localizedDescription)) — raw capture")
+            }
+        } else if ProcessInfo.processInfo.environment["ALOE_NO_AEC"] != nil {
+            eprint("ALOE_NO_AEC set — raw capture")
+        } else {
+            eprint("Mic '\(deviceName)' is not the default input — raw capture (no AEC)")
+        }
+        try startFFmpeg()
+    }
+
+    private func startFFmpeg() throws {
         guard let ffmpeg = MicCapture.findFFmpeg() else {
             throw NSError(domain: "aloe", code: 40, userInfo: [NSLocalizedDescriptionKey:
                 "ffmpeg not found. Install with: brew install ffmpeg"])
@@ -743,6 +855,7 @@ final class MicCapture: @unchecked Sendable {
 
     func stop() {
         stopFlag = true
+        stopVPIO()
         if let proc = process {
             proc.terminate()
             proc.waitUntilExit()
