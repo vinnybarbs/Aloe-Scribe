@@ -885,7 +885,6 @@ def _label_and_render(
 
     label_map: dict = {}
     counts = {CH_MIC: 0, CH_SYSTEM: 0}
-    labeled = []
     for start, end, text, channel, cluster in tagged:
         key = (channel, cluster)
         if key not in label_map:
@@ -895,9 +894,29 @@ def _label_and_render(
             else:
                 counts[channel] += 1
                 label_map[key] = f"{_LABEL_PREFIX[channel]}{counts[channel]}"
-        labeled.append(
-            LabeledSentence(start=start, end=end, text=text, label=label_map[key])
+
+    # Elimination: when the roster has exactly one attendee left unassigned
+    # and exactly one speaker cluster is still anonymous, they must be the
+    # same person. Strictly one-to-one — with two of either it would be a
+    # guess (diarization over-splits often), so anything else stays anonymous.
+    roster_names = [_sanitize_name(str(a)) for a in (attendees or [])]
+    roster_names = [a for a in roster_names if a]
+    if roster_names:
+        named_lower = {n.lower() for n in cluster_names.values()}
+        unassigned = [a for a in roster_names if a.lower() not in named_lower]
+        anon_keys = [
+            k for k, lbl in label_map.items()
+            if k not in cluster_names
+        ]
+        if len(unassigned) == 1 and len(anon_keys) == 1:
+            label_map[anon_keys[0]] = unassigned[0]
+
+    labeled = [
+        LabeledSentence(
+            start=start, end=end, text=text, label=label_map[(channel, cluster)]
         )
+        for start, end, text, channel, cluster in tagged
+    ]
 
     diarized = any(t is not None for t in turns.values())
     return render_document(title, when, source, labeled, notes, attendees, diarized)

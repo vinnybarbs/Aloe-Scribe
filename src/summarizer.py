@@ -51,11 +51,14 @@ Document:
 """
 
 _OWNER_RULE_LABELED = (
-    "Start a line with the owner's name ONLY when a transcript line carries "
-    "that person's name as its speaker label and that speaker states the "
-    "commitment themselves. The meeting title and attendee list are never "
-    "evidence of ownership. When the owner is not certain, start the line "
-    "with \"Owner unclear:\" instead. Never guess a name."
+    "The owner of an action item is the SPEAKER LABEL on the transcript line "
+    "where the commitment is stated, copied exactly. Anonymous labels like R2 "
+    "or M1 are valid owners: write \"R2 to send the paperwork\". Never move a "
+    "commitment to a different person: when R2 says \"we will send it over\", "
+    "the owner is R2, not the named person they are talking to. A speaker "
+    "offering or requesting something owns that offer or request. The meeting "
+    "title and attendee list are never evidence of ownership. When the owner "
+    "is not certain, start the line with \"Owner unclear:\" instead."
 )
 _OWNER_RULE_UNLABELED = (
     "This transcript does not identify who is speaking, so ownership cannot "
@@ -136,7 +139,7 @@ if m:
 sys.stdout.write(final)
 """
 
-_EXTRACT_PROMPT = """From the meeting document below, extract facts one line each, naming the SPECIFIC people involved and the specific subject, quoting or closely paraphrasing the transcript. Prefix every line with exactly one tag:
+_EXTRACT_PROMPT = """From the meeting document below, extract facts one line each, naming the SPECIFIC people involved and the specific subject, quoting or closely paraphrasing the transcript. When transcript lines carry speaker labels (names or codes like R2, M1), attribute each fact to the label on the line that states it, copied exactly: "R6 offers to send Carl the mandate document". Never reattribute a statement to a different speaker. Prefix every line with exactly one tag:
 [commitment] an agreed next step, planned call, or introduction someone will actually do
 [decision] something now settled
 [deadline] a stated date or timeframe
@@ -231,7 +234,14 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
     if exe is None:
         log.info("No runtime venv found. Summarizer disabled.")
         return None
+    # Re-summarizing an already-summarized file must not feed the model its
+    # own previous block — it parrots it back verbatim instead of rereading
+    # the transcript. Generate from the document minus generated sections.
     doc = md_text
+    for section in ("Summary", "Decisions", "Action items", "Open questions"):
+        doc = re.sub(
+            rf"^## {section}\n.*?(?=^## |\Z)", "", doc, flags=re.M | re.S
+        )
     if len(doc) > MAX_INPUT_CHARS:
         half = MAX_INPUT_CHARS // 2
         doc = (
