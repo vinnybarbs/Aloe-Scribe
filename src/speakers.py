@@ -50,6 +50,18 @@ CH_SYSTEM = 1
 
 _LABEL_PREFIX = {CH_MIC: "M", CH_SYSTEM: "R"}
 
+# When the output folder is an Obsidian vault, attendee names in the document
+# body render as [[wikilinks]] so every person becomes a linked note with
+# backlinks from all their meetings. Set from [output] obsidian_links at
+# startup; frontmatter stays plain names so parsers are unaffected.
+OBSIDIAN_LINKS = False
+
+
+def _fmt_names(names: list) -> str:
+    if OBSIDIAN_LINKS:
+        return ", ".join(f"[[{n}]]" for n in names)
+    return ", ".join(names)
+
 # sherpa-onnx model assets. Note: "recongition" is the real (typo'd) tag name
 # on the k2-fsa release — do not "fix" it.
 _SEG_URL = (
@@ -1157,7 +1169,7 @@ def render_document(
     roster = [_sanitize_name(str(a)) for a in (attendees or [])]
     roster = [a for a in roster if a]
     if roster:
-        meta.append(f"Attendees: {', '.join(roster)}")
+        meta.append(f"Attendees: {_fmt_names(roster)}")
     seen: list = []
     for s in labeled:
         if s.label not in seen:
@@ -1483,6 +1495,7 @@ def speaker_frontmatter_extras(
         "and conversational context."
     )
     lines = [
+        "tags: [meeting]",
         f"speakers: [{', '.join(seen)}]",
         f'speaker_key: "{scheme}"',
     ]

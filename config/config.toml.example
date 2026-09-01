@@ -74,6 +74,11 @@ model_path = "~/whisper.cpp/models/ggml-large-v3-turbo.bin"
 # Where transcripts land locally before syncing
 local_dir = "~/meetings"
 
+# Obsidian vault mode: attendee names in the document body become
+# [[wikilinks]], so each person is a linked note with backlinks from every
+# meeting they attended. Point local_dir inside your vault and enable.
+obsidian_links = false
+
 # Filename format (uses Python strftime + meeting title)
 # {date} = 2026-04-06, {time} = 1000, {title} = meeting-title-slugified
 filename_format = "{date}-{time}-{title}.md"

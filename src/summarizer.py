@@ -397,6 +397,11 @@ def generate_summary(md_text: str, model: str) -> Optional[str]:
 
 
 def _attendees_line(md_text: str) -> Optional[str]:
+    # Prefer the body metadata line: it carries Obsidian wikilinks when the
+    # vault mode is on. Frontmatter (always plain names) is the fallback.
+    m = re.search(r"^Attendees: (.+)$", md_text, flags=re.M)
+    if m and m.group(1).strip():
+        return f"Attendees: {m.group(1).strip()}"
     m = re.search(r"^attendees: \[([^\]]*)\]$", md_text, flags=re.M)
     if not m or not m.group(1).strip():
         return None

@@ -255,6 +255,14 @@ class AloeScribe:
 
         # Local executive summary after the transcript lands (small on-device
         # model via mlx-lm, subprocess-isolated).
+        try:
+            import speakers as _spk
+
+            _spk.OBSIDIAN_LINKS = bool(
+                config.get("output", {}).get("obsidian_links", False)
+            )
+        except Exception:
+            pass
         scfg = config.get("summarizer", {})
         self._summarizer_enabled = bool(scfg.get("enabled", True))
         self._summarizer_model = scfg.get("model", "")
@@ -1058,7 +1066,7 @@ class AloeScribe:
             ]
             if roster:
                 meta.append("")
-                meta.append(f"Attendees: {', '.join(roster)}")
+                meta.append(f"Attendees: {speakers._fmt_names(roster)}")
             notes_md = speakers.build_notes_section(
                 speakers.parse_notes_log(job.get("notes_text", ""))
             )
