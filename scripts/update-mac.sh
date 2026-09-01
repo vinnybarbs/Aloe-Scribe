@@ -84,6 +84,7 @@ if [ -x "$VENV_DIR/bin/pip" ]; then
         # Non-fatal: without it the app falls back to sherpa diarization.
         "$VENV_DIR/bin/pip" install -q \
             "senko @ git+https://github.com/narcotic-sh/senko@ba0e12ed923ff49e8c2d9d9a3e42d7923cb95724" \
+            "spectralcluster==0.2.22" \
             && echo "  Senko diarization ready." \
             || echo -e "  ${YELLOW}⚠ Senko install failed. Speaker identification uses the slower fallback.${NC}"
         bash "$PROJECT_DIR/scripts/fetch-summarizer.sh" || \
