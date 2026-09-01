@@ -895,6 +895,9 @@ class AloeScribe:
                         log.info(f"Speaker names applied: {md_path.name}")
                         # Re-sync so the named version replaces the labeled one.
                         self.syncer.enqueue(md_path)
+                        # Names changed, so the summary's owners are stale —
+                        # rebuild it with the real names.
+                        self._resummarize_existing(md_path)
                 except Exception as e:
                     log.error(f"Applying speaker names failed: {e}")
 

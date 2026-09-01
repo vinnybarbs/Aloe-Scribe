@@ -13,8 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
-from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPolygon, QPen, QAction
+from PyQt6.QtCore import Qt, QTimer, QPoint, QEvent, pyqtSignal, QObject
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPolygon, QPen, QAction, QTextCursor, QTextCharFormat
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -235,12 +235,11 @@ class RecordingsDialog(QDialog):
     midway). Replaces the bare file-picker button."""
 
     def __init__(self, parent, output_dir: Path, on_transcribe, on_merge,
-                 on_save=None, on_resummarize=None):
+                 on_name=None):
         super().__init__(parent)
         self._on_transcribe = on_transcribe
         self._on_merge = on_merge
-        self._on_save = on_save
-        self._on_resummarize = on_resummarize
+        self._on_name = on_name
         self._output_dir = output_dir
         self.setWindowTitle("Aloe Scribe · Recordings")
         self.setStyleSheet(_STYLESHEET)
@@ -363,85 +362,16 @@ class RecordingsDialog(QDialog):
 
     def _do_rename(self):
         sel = self._selected()
-        if len(sel) != 1 or sel[0].suffix != ".md":
+        if len(sel) != 1 or sel[0].suffix != ".md" or not self._on_name:
             return
         path = sel[0]
-        try:
-            text = path.read_text(encoding="utf-8")
-        except Exception as e:
-            QMessageBox.warning(self, "Aloe Scribe", f"Could not read file: {e}")
-            return
-        import re as _re
-        from collections import Counter
-
-        import speakers
-
-        counts = Counter(
-            m.group(1)
-            for m in _re.finditer(r"(?m)^\[\d+:\d\d\] ([^:\n]+):", text)
-        )
-        if not counts:
-            QMessageBox.information(
-                self, "Aloe Scribe",
-                "This transcript has no speaker-labeled lines to rename.",
-            )
-            return
-        m = _re.search(r"(?m)^attendees: \[(.*?)\]", text)
-        roster = (
-            [a.strip() for a in m.group(1).split(",") if a.strip()]
-            if m else []
-        )
-        anon = _re.compile(r"^(M\d+|R\d+|Speaker unclear)$")
-        # Anonymous labels first, busiest first — the ones worth naming.
-        labels = sorted(
-            counts, key=lambda l: (0 if anon.match(l) else 1, -counts[l])
-        )
-        mapping: dict = {}
-        for label in labels:
-            used = {v.lower() for v in mapping.values()}
-            used |= {l.lower() for l in counts if not anon.match(l) and l not in mapping}
-            options = [
-                n for n in roster
-                if n.lower() not in used and n.lower() != label.lower()
-            ]
-            for l in counts:
-                if not anon.match(l) and l != label and l not in options:
-                    options.append(l)
-            name, ok = QInputDialog.getItem(
-                self,
-                "Name speakers",
-                f"Who is {label}? ({counts[label]} lines)\n"
-                "Pick from the roster or type a name. Cancel skips this one.",
-                options or [""],
-                0,
-                True,
-            )
-            name = (name or "").strip()
-            if ok and name and name != label:
-                mapping[label] = name
-        if not mapping:
-            return
-        try:
-            renamed = speakers.apply_speaker_names(text, mapping)
-            if self._on_save:
-                self._on_save(path, renamed)
-            else:
-                path.write_text(renamed, encoding="utf-8")
-        except Exception as e:
-            QMessageBox.warning(self, "Aloe Scribe", f"Rename failed: {e}")
-            return
-        if self._on_resummarize:
-            resp = QMessageBox.question(
-                self,
-                "Aloe Scribe",
-                "Names applied. Regenerate the summary with the new names?\n"
-                "Runs in the background, about half a minute.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if resp == QMessageBox.StandardButton.Yes:
-                self._on_resummarize(path)
         self.accept()
+        # The full quotes-and-transcript naming dialog (same one the Done
+        # screen uses) — file read and quote extraction happen off the UI
+        # thread, the dialog itself arrives via the signal bridge.
+        threading.Thread(
+            target=lambda: self._on_name(str(path)), daemon=True
+        ).start()
 
     def _browse(self):
         path, _f = QFileDialog.getOpenFileName(
@@ -1389,8 +1319,7 @@ class AloeScribeWindow(QMainWindow):
             self._resolved_output_dir(),
             on_transcribe=self._start_transcribe_file,
             on_merge=self._start_merge,
-            on_save=self._on_save_transcript,
-            on_resummarize=self._on_resummarize,
+            on_name=self._on_name_speakers,
         )
         dlg.exec()
 
@@ -1767,9 +1696,19 @@ class AloeScribeWindow(QMainWindow):
         head.setWordWrap(True)
         layout.addWidget(head)
 
+        # The meeting's own roster feeds each dropdown, so naming is a
+        # pick, not a retype. Free typing stays allowed.
+        import re as _re
+        m = _re.search(r"(?m)^attendees: \[(.*?)\]", transcript_text or "")
+        roster = (
+            [a.strip() for a in m.group(1).split(",") if a.strip()]
+            if m else []
+        )
+
         rows_host = QWidget()
         rows_layout = QVBoxLayout(rows_host)
         edits = {}
+        focus_map = {}
         for label, speaker_quotes, count in quotes:
             # Older callers may pass a single quote string.
             if isinstance(speaker_quotes, str):
@@ -1781,10 +1720,20 @@ class AloeScribeWindow(QMainWindow):
             )
             who.setWordWrap(True)
             rows_layout.addWidget(who)
-            edit = QLineEdit()
-            edit.setPlaceholderText("Name")
+            edit = QComboBox()
+            edit.setEditable(True)
+            edit.addItem("")
+            for n in roster:
+                if n.lower() != label.lower():
+                    edit.addItem(n)
+            edit.setCurrentIndex(0)
+            if edit.lineEdit() is not None:
+                edit.lineEdit().setPlaceholderText("Name")
             rows_layout.addWidget(edit)
             edits[label] = edit
+            focus_map[edit] = label
+            if edit.lineEdit() is not None:
+                focus_map[edit.lineEdit()] = label
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1792,12 +1741,53 @@ class AloeScribeWindow(QMainWindow):
         scroll.setMinimumSize(560, min(340, 110 * len(quotes) + 40))
         layout.addWidget(scroll, 2)
 
+        body = None
         if transcript_text:
             body = QTextEdit()
             body.setReadOnly(True)
             body.setPlainText(transcript_text)
             body.setMinimumHeight(220)
             layout.addWidget(body, 3)
+
+        def _highlight(label: str):
+            # Paint every line this speaker said and jump to their first —
+            # nobody recognizes a voice from a count, they recognize words.
+            if body is None:
+                return
+            pat = _re.compile(r"^\[\d+:\d\d\] " + _re.escape(label) + ": ")
+            sels = []
+            first_pos = None
+            block = body.document().firstBlock()
+            while block.isValid():
+                if pat.match(block.text()):
+                    cur = QTextCursor(block)
+                    cur.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                                     QTextCursor.MoveMode.KeepAnchor)
+                    fmt = QTextCharFormat()
+                    fmt.setBackground(QColor("#CBE7D6"))
+                    sel = QTextEdit.ExtraSelection()
+                    sel.cursor = cur
+                    sel.format = fmt
+                    sels.append(sel)
+                    if first_pos is None:
+                        first_pos = block.position()
+                block = block.next()
+            body.setExtraSelections(sels)
+            if first_pos is not None:
+                cur = body.textCursor()
+                cur.setPosition(first_pos)
+                body.setTextCursor(cur)
+                body.ensureCursorVisible()
+
+        class _FocusWatch(QObject):
+            def eventFilter(self, obj, ev):
+                if ev.type() == QEvent.Type.FocusIn and obj in focus_map:
+                    _highlight(focus_map[obj])
+                return False
+
+        watch = _FocusWatch(dlg)
+        for w in list(focus_map):
+            w.installEventFilter(watch)
 
         buttons = QDialogButtonBox()
         save = buttons.addButton(
@@ -1811,9 +1801,9 @@ class AloeScribeWindow(QMainWindow):
 
         if dlg.exec() == QDialog.DialogCode.Accepted:
             mapping = {
-                label: edit.text().strip()
+                label: edit.currentText().strip()
                 for label, edit in edits.items()
-                if edit.text().strip()
+                if edit.currentText().strip()
             }
             if mapping:
                 import threading
