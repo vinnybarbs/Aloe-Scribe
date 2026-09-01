@@ -35,9 +35,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 ; The PyInstaller one-folder build.
-Source: "dist\Aloe Scribe\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Paths are relative to THIS script's folder (Inno rule), so step up to the
+; repo root where PyInstaller and the model fetch actually put things.
+Source: "..\dist\Aloe Scribe\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; The transcription model, bundled so the app works offline with no download.
-Source: "models\{#MyModelName}\*"; DestDir: "{app}\models\{#MyModelName}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\models\{#MyModelName}\*"; DestDir: "{app}\models\{#MyModelName}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\Aloe Scribe"; Filename: "{app}\{#MyAppExeName}"
