@@ -242,18 +242,146 @@ def _download(url: str, dst: Path) -> bool:
 # runs ~30-60x faster (a 47-min channel in ~7 s on Apple Silicon).
 _SENKO_WORKER = r"""
 import json, sys
+import numpy as np
 import senko
 
-segs = senko.Diarizer(quiet=True).diarize(sys.argv[1])["merged_segments"]
-ids = {}
-out = []
-for s in segs:
-    spk = s["speaker"]
-    if spk not in ids:
-        ids[spk] = len(ids)
-    out.append((float(s["start"]), float(s["end"]), ids[spk]))
-out.sort()
-print(json.dumps(out))
+wav = sys.argv[1]
+tags = []
+if len(sys.argv) > 2 and sys.argv[2].strip():
+    try:
+        tags = [(float(t), str(n)) for t, n in json.loads(sys.argv[2])]
+    except Exception:
+        tags = []
+
+d = senko.Diarizer(quiet=True)
+
+def emit(segments, centroids):
+    print(json.dumps({"segments": segments, "centroids": centroids}))
+
+def norm_cents(emb, labels):
+    cents = {}
+    lab = np.asarray(labels)
+    for c in sorted(set(int(x) for x in lab)):
+        m = np.mean(np.asarray(emb)[lab == c], axis=0)
+        n = float(np.linalg.norm(m))
+        if n > 0:
+            m = m / n
+        cents[str(c)] = [round(float(x), 6) for x in m]
+    return cents
+
+def plain():
+    res = d.diarize(wav)
+    if res is None:
+        emit([], {})
+        return
+    ids, out = {}, []
+    for s in res["merged_segments"]:
+        spk = s["speaker"]
+        if spk not in ids:
+            ids[spk] = len(ids)
+        out.append((float(s["start"]), float(s["end"]), ids[spk]))
+    out.sort()
+    cents = {}
+    for spk, vec in (res.get("speaker_centroids") or {}).items():
+        if spk in ids:
+            v = np.asarray(vec, dtype=float).ravel()
+            n = float(np.linalg.norm(v))
+            if n > 0:
+                v = v / n
+            cents[str(ids[spk])] = [round(float(x), 6) for x in v]
+    emit(out, cents)
+
+def constrained():
+    # Senko's own front half (VAD, fbank, CAM++ embeddings), then
+    # tag-constrained spectral clustering instead of its UMAP+HDBSCAN:
+    # live tags become must-link/cannot-link constraints and set a floor
+    # on the speaker count (Turn-to-Diarize, arXiv 2109.11641).
+    vad = d._perform_vad(wav)
+    if not vad:
+        emit([], {})
+        return True
+    subs = d._generate_subsegments(vad, None)
+    if len(subs) < 4:
+        return False
+    feats, fps, offs, dim = d._extract_fbank_features(wav, subs)
+    offs = [int(o) for o in offs]
+    emb = np.asarray(d._generate_embeddings(feats, fps, offs, dim))
+    n = len(subs)
+    if emb.shape[0] != n:
+        return False
+
+    named = {}
+    for t, name in tags:
+        best, bd = None, None
+        for i, (s0, e0) in enumerate(subs):
+            if s0 - 1.0 <= t <= e0 + 2.5:
+                dist = 0.0 if s0 <= t <= e0 else min(abs(t - s0), abs(t - e0))
+                if bd is None or dist < bd:
+                    best, bd = i, dist
+        if best is not None:
+            named.setdefault(best, name.strip().lower())
+
+    M = np.zeros((n, n))
+    items = list(named.items())
+    for a in range(len(items)):
+        for b in range(a + 1, len(items)):
+            i, ni = items[a]
+            j, nj = items[b]
+            M[i, j] = M[j, i] = 1.0 if ni == nj else -1.0
+
+    from spectralcluster import (
+        ConstraintName,
+        ConstraintOptions,
+        ICASSP2018_REFINEMENT_SEQUENCE,
+        RefinementOptions,
+        SpectralClusterer,
+        ThresholdType,
+    )
+
+    clusterer = SpectralClusterer(
+        min_clusters=max(1, len(set(named.values()))),
+        max_clusters=10,
+        refinement_options=RefinementOptions(
+            gaussian_blur_sigma=1,
+            p_percentile=0.95,
+            thresholding_soft_multiplier=0.01,
+            thresholding_type=ThresholdType.RowMax,
+            refinement_sequence=ICASSP2018_REFINEMENT_SEQUENCE,
+        ),
+        constraint_options=ConstraintOptions(
+            constraint_name=ConstraintName.ConstraintPropagation,
+            apply_before_refinement=True,
+        ),
+        max_spectral_size=2000,
+    )
+    labels = clusterer.predict(emb, constraint_matrix=M)
+
+    uniq = sorted(set(int(x) for x in labels))
+    remap = {u: i for i, u in enumerate(uniq)}
+    lab = [remap[int(x)] for x in labels]
+    segs = []
+    for (s0, e0), l in zip(subs, lab):
+        s0, e0 = float(max(0.0, s0)), float(max(0.0, e0))
+        if segs and segs[-1][2] == l and s0 <= segs[-1][1] + 1.0:
+            segs[-1][1] = max(segs[-1][1], e0)
+            continue
+        if segs and s0 < segs[-1][1]:
+            mid = (segs[-1][1] + s0) / 2.0
+            segs[-1][1] = mid
+            s0 = mid
+        segs.append([s0, e0, l])
+    emit([(round(s, 3), round(e, 3), l) for s, e, l in segs], norm_cents(emb, lab))
+    return True
+
+done = False
+if tags:
+    try:
+        done = constrained()
+    except Exception as e:
+        print("constrained clustering failed: %s" % e, file=sys.stderr)
+        done = False
+if not done:
+    plain()
 """
 
 _DIARIZE_WORKER = r"""
@@ -419,26 +547,39 @@ class Diarizer:
                 log.info("Senko not available — using sherpa-onnx diarization")
         return self._senko_ok
 
-    def diarize_file(self, wav_path: Path) -> Optional[list]:
+    def diarize_file(self, wav_path: Path, tags: Optional[list] = None) -> Optional[list]:
         """Diarize a mono 16 kHz WAV in a SUBPROCESS so the multi-minute
         model call cannot hold this process's GIL (which froze the app's
         UI). Prefers Senko (fast, better speaker counting), falls back to
         the sherpa pipeline, then to in-process sherpa. Same return shape
-        as diarize()."""
+        as diarize().
+
+        `tags` are the live (elapsed_s, name) speaker tags: they become
+        must-link/cannot-link constraints inside Senko-path clustering, and
+        the count of distinct tagged names floors the speaker count. After
+        a Senko run, self.last_centroids maps cluster id to that voice's
+        192-dim fingerprint (empty for the fallback paths)."""
+        self.last_centroids = {}
         exe = _worker_python()
         if exe is not None and self._senko_available(exe):
             try:
                 proc = subprocess.run(
-                    [exe, "-c", _SENKO_WORKER, str(wav_path)],
+                    [exe, "-c", _SENKO_WORKER, str(wav_path),
+                     json.dumps([[float(t), str(n)] for t, n in (tags or [])])],
                     capture_output=True,
                     text=True,
                     timeout=1800,
                     env=worker_env(),
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
+                    payload = json.loads(proc.stdout)
+                    self.last_centroids = {
+                        int(k): v
+                        for k, v in (payload.get("centroids") or {}).items()
+                    }
                     return [
                         (float(a), float(b), int(c))
-                        for a, b, c in json.loads(proc.stdout)
+                        for a, b, c in payload.get("segments", [])
                     ]
                 log.warning(
                     f"Senko subprocess failed (rc={proc.returncode}): "
@@ -830,9 +971,14 @@ def build_labeled_transcript(
         for ch in active:
             write_channel_wav(chan_samples[ch], rate, tmp_wavs[ch])
 
+        chan_centroids: dict = {}
+
         def _diarize_all():
             for ch in active:
-                turns[ch] = diarizer.diarize_file(tmp_wavs[ch])
+                turns[ch] = diarizer.diarize_file(tmp_wavs[ch], tags=tags)
+                chan_centroids[ch] = dict(
+                    getattr(diarizer, "last_centroids", {}) or {}
+                )
 
         diar_thread = None
         if diarizer is not None and active:
@@ -861,7 +1007,8 @@ def build_labeled_transcript(
                 pass
 
     return _label_and_render(
-        per_channel, turns, tags, notes, attendees, title, when, source
+        per_channel, turns, tags, notes, attendees, title, when, source,
+        centroids=chan_centroids,
     )
 
 
@@ -874,6 +1021,7 @@ def _label_and_render(
     title: str,
     when,
     source: str,
+    centroids: Optional[dict] = None,
 ) -> Optional[str]:
     """Shared final stage: cluster-tag every sentence, name clusters from the
     live tags, and render frontmatter + body + notes. Used by both the batch
@@ -930,6 +1078,37 @@ def _label_and_render(
         ]
         if len(unassigned) == 1 and len(anon_keys) == 1:
             label_map[anon_keys[0]] = unassigned[0]
+
+    # Named clusters carry a voice fingerprint worth keeping: enrollment
+    # rides the naming gestures, so a tagged colleague can be recognized in
+    # future meetings without tagging again (see voice_profiles).
+    if centroids:
+        try:
+            import re as _re
+
+            import voice_profiles
+
+            anon = _re.compile(r"^(M|R)\d+$")
+            secs: dict = {}
+            for start, end, _text, channel, cluster in tagged:
+                key = (channel, cluster)
+                secs[key] = secs.get(key, 0.0) + max(0.0, end - start)
+            for key, lbl in label_map.items():
+                if anon.match(lbl):
+                    continue
+                ch, cluster = key
+                vec = (centroids.get(ch) or {}).get(cluster)
+                if not vec:
+                    continue
+                voice_profiles.record(
+                    lbl,
+                    "mic" if ch == CH_MIC else "system",
+                    vec,
+                    secs.get(key, 0.0),
+                    "tag" if key in cluster_names else "elimination",
+                )
+        except Exception as e:
+            log.warning(f"Voice profile update skipped: {e}")
 
     labeled = [
         LabeledSentence(
@@ -1041,11 +1220,15 @@ def assemble_labeled_transcript(
         ch: wav_path.with_name(f".{wav_path.stem}.ch{ch}.wav") for ch in active
     }
     try:
+        chan_centroids: dict = {}
         if diarizer is not None:
             note("Identifying speakers…")
             for ch in active:
                 write_channel_wav(chan_samples[ch], rate, tmp_wavs[ch])
-                turns[ch] = diarizer.diarize_file(tmp_wavs[ch])
+                turns[ch] = diarizer.diarize_file(tmp_wavs[ch], tags=tags)
+                chan_centroids[ch] = dict(
+                    getattr(diarizer, "last_centroids", {}) or {}
+                )
     finally:
         for t in tmp_wavs.values():
             try:
@@ -1055,7 +1238,8 @@ def assemble_labeled_transcript(
 
     note("Building the transcript…")
     return _label_and_render(
-        per_channel, turns, tags, notes, attendees, title, when, source
+        per_channel, turns, tags, notes, attendees, title, when, source,
+        centroids=chan_centroids,
     )
 
 

@@ -33,6 +33,7 @@ OPTIONS = {
         # py2app's static graph never sees them — force them in like tty below.
         "speakers",
         "summarizer",
+        "voice_profiles",
         "syncer",
         "notifications",
         "ui_mac",
