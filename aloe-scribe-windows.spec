@@ -27,6 +27,13 @@ hiddenimports = [
     "transcriber_faster_whisper",  # selected via a dynamic import in main.py
     "recorder_windows",
     "ui_windows",
+    # Imported lazily (inside functions) — PyInstaller cannot see these.
+    "speakers",
+    "summarizer",
+    "voice_profiles",
+    "frontmatter",
+    "meeting",
+    "notifications",
 ]
 
 for pkg in ("ctranslate2", "faster_whisper", "av", "pyaudiowpatch", "tokenizers"):

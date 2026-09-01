@@ -87,6 +87,10 @@ class AloeScribeApp(AloeScribeApp):  # noqa: F811 — intentional Windows overri
         # Stay alive in the tray when the window is closed.
         self._app.setQuitOnLastWindowClosed(False)
 
+        # Mirror ui_mac.run()'s full callback set — the port originally
+        # passed only the early callbacks, which silently dropped meeting
+        # metadata, transcript saves, merges, speaker naming, and the
+        # resummarize hook on Windows.
         self._window = WindowsAloeScribeWindow(
             on_start_recording=self._on_start_recording,
             on_stop_recording=self._on_stop_recording,
@@ -95,6 +99,11 @@ class AloeScribeApp(AloeScribeApp):  # noqa: F811 — intentional Windows overri
             on_device_change=self._on_device_change,
             on_output_dir_change=self._on_output_dir_change,
             on_transcribe_file=self._on_transcribe_file,
+            on_name_speakers=self._on_name_speakers,
+            on_meta_changed=self._on_meta_changed,
+            on_save_transcript=self._on_save_transcript,
+            on_merge_transcripts=self._on_merge_transcripts,
+            on_resummarize=self._on_resummarize,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,

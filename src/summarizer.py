@@ -230,6 +230,14 @@ def _summary_is_bulleted(text: str) -> bool:
 def generate_summary(md_text: str, model: str) -> Optional[str]:
     """Run the model over the document; returns the '## Summary ...' block or
     None on any failure. Subprocess-isolated, bounded at five minutes."""
+    import sys as _sys
+
+    if _sys.platform == "win32":
+        # The summarizer rides mlx-lm, which is Apple Silicon only. Windows
+        # transcripts ship without the summary block until a llama.cpp or
+        # ONNX worker lands.
+        log.info("Summarizer unavailable on Windows (mlx is Apple-only).")
+        return None
     exe = _worker_python()
     if exe is None:
         log.info("No runtime venv found. Summarizer disabled.")
