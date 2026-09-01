@@ -21,7 +21,8 @@ DefaultDirName={localappdata}\Programs\Aloe Scribe
 DefaultGroupName=Aloe Scribe
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputDir=installer\Output
+; Relative to this script's folder, same Inno rule as the Source paths.
+OutputDir=Output
 OutputBaseFilename=AloeScribeSetup
 Compression=lzma2
 SolidCompression=yes
