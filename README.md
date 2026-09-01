@@ -24,6 +24,38 @@ If the app crashes and leaves an orphan `.wav` behind, recover it:
 python3 scripts/transcribe_wav.py ~/meetings/2026-04-17-1127-busy.wav
 ```
 
+## System requirements
+
+Everything runs on the endpoint, so the hardware matters. Peak memory
+figures below are measured, and the stages are staggered by design
+(transcription during the meeting, diarization at stop, the summary only
+after the transcript is saved), so the realistic concurrent peak is about
+4 GB, not the sum of the parts.
+
+**macOS**
+
+- Apple Silicon (M1 or later) is a hard requirement. The transcriber and
+  summarizer run on MLX, which does not exist for Intel Macs.
+- macOS 13 minimum (system-audio capture), macOS 14 recommended (echo
+  cancellation ducking control).
+- RAM: 8 GB minimum, 16 GB recommended. Transcription peaks at 1.2 GB,
+  diarization at 0.8 GB, and the summary model at 3 to 4 GB, alongside
+  whatever the meeting app and browser are using.
+- Disk: 12 GB free (the two bundled models are 5.2 GB of that).
+- Any M-series chip is fast enough; newer chips shorten the
+  stop-to-transcript wait from tens of seconds toward seconds.
+
+**Windows**
+
+- 64-bit Windows 10 or 11.
+- x64 CPU with AVX2 (roughly Intel 2013 / AMD 2015 or newer), 4 cores
+  minimum, 8 recommended. An NVIDIA GPU is optional and speeds
+  transcription up considerably.
+- RAM: 8 GB minimum, 16 GB recommended.
+- Disk: 6 GB free.
+- Windows currently ships without the summary block, echo cancellation,
+  and voice profiles (those depend on Apple-only runtimes).
+
 ## Install, macOS
 
 New machine. One command clones the repo, sets up the Python env, the dependencies, the Parakeet model (downloaded from GitHub, not Hugging Face), and builds the app into `/Applications`:
