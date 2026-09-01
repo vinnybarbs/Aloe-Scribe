@@ -327,6 +327,7 @@ class AloeScribe:
             on_meta_changed=self._on_meeting_meta_changed,
             on_save_transcript=self._on_save_transcript_edits,
             on_merge_transcripts=self._merge_transcript_files,
+            on_resummarize=self._resummarize_existing,
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -1066,6 +1067,16 @@ class AloeScribe:
             )
         except Exception as e:
             log.warning(f"Could not append meeting extras: {e}")
+
+    def _resummarize_existing(self, md_path):
+        """Recordings browser 'Name speakers' follow-up: rebuild the summary
+        of an already-finished transcript off the UI thread."""
+        import threading
+
+        threading.Thread(
+            target=lambda: self._summarize_and_refresh(Path(md_path)),
+            daemon=True,
+        ).start()
 
     def _summarize_and_refresh(self, md_path: Path):
         """Add the local executive summary AFTER the transcript is safe on

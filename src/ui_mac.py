@@ -234,10 +234,13 @@ class RecordingsDialog(QDialog):
     Merge (one meeting split into two transcripts because a call quit
     midway). Replaces the bare file-picker button."""
 
-    def __init__(self, parent, output_dir: Path, on_transcribe, on_merge):
+    def __init__(self, parent, output_dir: Path, on_transcribe, on_merge,
+                 on_save=None, on_resummarize=None):
         super().__init__(parent)
         self._on_transcribe = on_transcribe
         self._on_merge = on_merge
+        self._on_save = on_save
+        self._on_resummarize = on_resummarize
         self._output_dir = output_dir
         self.setWindowTitle("Aloe Scribe · Recordings")
         self.setStyleSheet(_STYLESHEET)
@@ -292,6 +295,13 @@ class RecordingsDialog(QDialog):
             "meeting timeline."
         )
         self._merge_btn.clicked.connect(self._do_merge)
+        self._rename_btn = QPushButton("Name speakers")
+        self._rename_btn.setObjectName("btnSkip")
+        self._rename_btn.setToolTip(
+            "Put names on the speaker labels of a finished transcript "
+            "(M1, R2 and so on), then regenerate its summary."
+        )
+        self._rename_btn.clicked.connect(self._do_rename)
         open_btn = QPushButton("Open Folder")
         open_btn.setObjectName("btnSkip")
         open_btn.clicked.connect(
@@ -302,6 +312,7 @@ class RecordingsDialog(QDialog):
         browse.clicked.connect(self._browse)
         btn_row.addWidget(self._transcribe_btn)
         btn_row.addWidget(self._merge_btn)
+        btn_row.addWidget(self._rename_btn)
         btn_row.addWidget(open_btn)
         btn_row.addWidget(browse)
         layout.addLayout(btn_row)
@@ -322,6 +333,9 @@ class RecordingsDialog(QDialog):
         )
         self._merge_btn.setEnabled(
             len(sel) >= 2 and all(p.suffix == ".md" for p in sel)
+        )
+        self._rename_btn.setEnabled(
+            len(sel) == 1 and sel[0].suffix == ".md"
         )
 
     def _do_transcribe(self):
@@ -346,6 +360,88 @@ class RecordingsDialog(QDialog):
         if resp == QMessageBox.StandardButton.Yes:
             self.accept()
             self._on_merge([str(p) for p in sel])
+
+    def _do_rename(self):
+        sel = self._selected()
+        if len(sel) != 1 or sel[0].suffix != ".md":
+            return
+        path = sel[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception as e:
+            QMessageBox.warning(self, "Aloe Scribe", f"Could not read file: {e}")
+            return
+        import re as _re
+        from collections import Counter
+
+        import speakers
+
+        counts = Counter(
+            m.group(1)
+            for m in _re.finditer(r"(?m)^\[\d+:\d\d\] ([^:\n]+):", text)
+        )
+        if not counts:
+            QMessageBox.information(
+                self, "Aloe Scribe",
+                "This transcript has no speaker-labeled lines to rename.",
+            )
+            return
+        m = _re.search(r"(?m)^attendees: \[(.*?)\]", text)
+        roster = (
+            [a.strip() for a in m.group(1).split(",") if a.strip()]
+            if m else []
+        )
+        anon = _re.compile(r"^(M\d+|R\d+|Speaker unclear)$")
+        # Anonymous labels first, busiest first — the ones worth naming.
+        labels = sorted(
+            counts, key=lambda l: (0 if anon.match(l) else 1, -counts[l])
+        )
+        mapping: dict = {}
+        for label in labels:
+            used = {v.lower() for v in mapping.values()}
+            used |= {l.lower() for l in counts if not anon.match(l) and l not in mapping}
+            options = [
+                n for n in roster
+                if n.lower() not in used and n.lower() != label.lower()
+            ]
+            for l in counts:
+                if not anon.match(l) and l != label and l not in options:
+                    options.append(l)
+            name, ok = QInputDialog.getItem(
+                self,
+                "Name speakers",
+                f"Who is {label}? ({counts[label]} lines)\n"
+                "Pick from the roster or type a name. Cancel skips this one.",
+                options or [""],
+                0,
+                True,
+            )
+            name = (name or "").strip()
+            if ok and name and name != label:
+                mapping[label] = name
+        if not mapping:
+            return
+        try:
+            renamed = speakers.apply_speaker_names(text, mapping)
+            if self._on_save:
+                self._on_save(path, renamed)
+            else:
+                path.write_text(renamed, encoding="utf-8")
+        except Exception as e:
+            QMessageBox.warning(self, "Aloe Scribe", f"Rename failed: {e}")
+            return
+        if self._on_resummarize:
+            resp = QMessageBox.question(
+                self,
+                "Aloe Scribe",
+                "Names applied. Regenerate the summary with the new names?\n"
+                "Runs in the background, about half a minute.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if resp == QMessageBox.StandardButton.Yes:
+                self._on_resummarize(path)
+        self.accept()
 
     def _browse(self):
         path, _f = QFileDialog.getOpenFileName(
@@ -753,6 +849,7 @@ class AloeScribeWindow(QMainWindow):
         on_meta_changed: Callable = None,
         on_save_transcript: Callable = None,
         on_merge_transcripts: Callable = None,
+        on_resummarize: Callable = None,
         live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
@@ -769,6 +866,7 @@ class AloeScribeWindow(QMainWindow):
         self._on_name_speakers = on_name_speakers
         self._on_meta_changed = on_meta_changed
         self._on_save_transcript = on_save_transcript
+        self._on_resummarize = on_resummarize
         self._on_merge_transcripts = on_merge_transcripts
         self._notes_window: Optional[NotesWindow] = None
         self._live_preview_enabled = live_preview
@@ -1291,6 +1389,8 @@ class AloeScribeWindow(QMainWindow):
             self._resolved_output_dir(),
             on_transcribe=self._start_transcribe_file,
             on_merge=self._start_merge,
+            on_save=self._on_save_transcript,
+            on_resummarize=self._on_resummarize,
         )
         dlg.exec()
 
@@ -1833,7 +1933,7 @@ class AloeScribeApp:
                  on_output_dir_change=None, on_transcribe_file=None,
                  on_name_speakers=None, processing_check=None,
                  on_meta_changed=None, on_save_transcript=None,
-                 on_merge_transcripts=None,
+                 on_merge_transcripts=None, on_resummarize=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1848,6 +1948,7 @@ class AloeScribeApp:
         self._on_meta_changed = on_meta_changed
         self._on_save_transcript = on_save_transcript
         self._on_merge_transcripts = on_merge_transcripts
+        self._on_resummarize = on_resummarize
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -1891,6 +1992,7 @@ class AloeScribeApp:
             on_meta_changed=self._on_meta_changed,
             on_save_transcript=self._on_save_transcript,
             on_merge_transcripts=self._on_merge_transcripts,
+            on_resummarize=self._on_resummarize,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,
