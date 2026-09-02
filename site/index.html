@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aloe Scribe. The private meeting notepad.</title>
+<meta name="description" content="Aloe Scribe records and transcribes your meetings entirely on your computer. No bot joins the call. Your audio never leaves the machine.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<style>
+  :root {
+    --green: #2F8F5B;
+    --green-2: #3A8C5A;
+    --green-dark: #256F47;
+    --ink: #2B342E;
+    --body: #4A554D;
+    --caption: #8B948C;
+    --line: #E2E9E4;
+    --paper: #F6FAF7;
+    --white: #FFFFFF;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--body);
+    background: var(--white);
+    line-height: 1.65;
+    font-size: 1.0625rem;
+  }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 0 1.25rem; }
+  a { color: var(--green); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    background: var(--white);
+  }
+  .nav {
+    max-width: 60rem; margin: 0 auto; padding: 0.85rem 1.25rem;
+    display: flex; align-items: center; gap: 1.5rem;
+  }
+  .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 650; color: var(--ink); font-size: 1.05rem; }
+  .brand img { width: 26px; height: 26px; }
+  .nav-links { display: flex; gap: 1.25rem; margin-left: auto; font-size: 0.95rem; }
+  .nav-links a { color: var(--body); }
+  .nav .btn { margin-left: 0.25rem; }
+
+  .btn {
+    display: inline-block; background: var(--green); color: var(--white);
+    padding: 0.7rem 1.35rem; border-radius: 10px; font-weight: 600;
+    font-size: 1rem; border: none; cursor: pointer;
+  }
+  .btn:hover { background: var(--green-dark); text-decoration: none; }
+  .btn.small { padding: 0.45rem 0.95rem; font-size: 0.9rem; }
+  .btn.ghost {
+    background: var(--white); color: var(--green); border: 1.5px solid var(--green);
+  }
+  .btn.ghost:hover { background: var(--paper); }
+
+  .kicker {
+    color: var(--caption); font-size: 0.8rem; font-weight: 650;
+    letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 0.75rem;
+  }
+  h1 {
+    color: var(--ink); font-size: 2.7rem; line-height: 1.12;
+    letter-spacing: -0.02em; font-weight: 750; margin-bottom: 1.1rem;
+  }
+  h2 {
+    color: var(--ink); font-size: 1.7rem; line-height: 1.25;
+    letter-spacing: -0.01em; font-weight: 700; margin-bottom: 0.9rem;
+  }
+  h3 { color: var(--ink); font-size: 1.1rem; font-weight: 650; margin-bottom: 0.4rem; }
+  section { padding: 4.25rem 0; }
+  section + section { border-top: 1px solid var(--line); }
+  p + p { margin-top: 1rem; }
+  .lede { font-size: 1.2rem; }
+  .caption { color: var(--caption); font-size: 0.9rem; }
+
+  .hero { padding: 5rem 0 4.5rem; }
+  .hero .actions { display: flex; gap: 0.8rem; flex-wrap: wrap; margin: 1.75rem 0 0.9rem; }
+
+  .note-card {
+    margin-top: 2.75rem; background: var(--paper); border: 1px solid var(--line);
+    border-radius: 14px; padding: 1.4rem 1.5rem;
+    font-size: 0.92rem; line-height: 1.7;
+  }
+  .note-card .file { color: var(--caption); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; margin-bottom: 0.8rem; }
+  .note-card .t { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; color: var(--body); }
+  .note-card .t b { color: var(--green-dark); font-weight: 650; }
+  .note-card .sec { color: var(--ink); font-weight: 650; margin: 0.65rem 0 0.15rem; }
+
+  .steps { list-style: none; counter-reset: step; margin-top: 1.75rem; }
+  .steps li {
+    counter-increment: step; position: relative; padding: 0 0 1.6rem 3.1rem;
+  }
+  .steps li::before {
+    content: counter(step); position: absolute; left: 0; top: 0.1rem;
+    width: 2rem; height: 2rem; border-radius: 50%;
+    background: var(--paper); border: 1.5px solid var(--green);
+    color: var(--green-dark); font-weight: 700; font-size: 0.95rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps li:last-child { padding-bottom: 0; }
+
+  table.flow {
+    width: 100%; border-collapse: collapse; margin-top: 1.5rem;
+    font-size: 0.98rem;
+  }
+  table.flow th, table.flow td {
+    text-align: left; padding: 0.8rem 1rem; border: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.flow th {
+    background: var(--paper); color: var(--ink); font-weight: 650;
+    white-space: nowrap; width: 9.5rem;
+  }
+  .table-scroll { overflow-x: auto; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; margin-top: 1.5rem; }
+  .card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+    padding: 1.35rem 1.4rem; font-size: 0.96rem;
+  }
+  .card ul { margin: 0.6rem 0 0 1.1rem; }
+  .card li { margin-bottom: 0.35rem; }
+  .badge {
+    display: inline-block; background: #F3EBDD; color: #8A6D3B;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; border-radius: 6px; padding: 0.15rem 0.5rem;
+    margin-left: 0.45rem; vertical-align: middle;
+  }
+
+  .dl-card {
+    background: var(--white); border: 1px solid var(--line); border-radius: 14px;
+    padding: 1.5rem 1.5rem; margin-top: 1.4rem;
+  }
+  .dl-card h3 { font-size: 1.2rem; }
+  pre.cmd {
+    background: #F2F6F3; border: 1px solid var(--line); border-radius: 10px;
+    padding: 0.9rem 1rem; margin: 0.9rem 0 0.6rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem; line-height: 1.5; overflow-x: auto;
+    white-space: pre; color: var(--ink);
+  }
+  .copy-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+
+  details {
+    border-bottom: 1px solid var(--line); padding: 1rem 0;
+  }
+  details:first-of-type { border-top: 1px solid var(--line); margin-top: 1.5rem; }
+  summary {
+    cursor: pointer; color: var(--ink); font-weight: 650; font-size: 1.02rem;
+    list-style: none; position: relative; padding-right: 2rem;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+"; position: absolute; right: 0.25rem; top: 0;
+    color: var(--green); font-weight: 600; font-size: 1.2rem;
+  }
+  details[open] summary::after { content: "\2212"; }
+  details p { margin-top: 0.7rem; font-size: 0.98rem; }
+
+  footer.site {
+    border-top: 1px solid var(--line); padding: 2.5rem 0 3rem;
+    font-size: 0.9rem; color: var(--caption);
+  }
+  footer.site .wrap { display: flex; flex-direction: column; gap: 0.6rem; }
+  footer.site .brand { font-size: 0.95rem; }
+  footer.site img { width: 20px; height: 20px; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 2.1rem; }
+    h2 { font-size: 1.45rem; }
+    .nav-links { display: none; }
+    .cols { grid-template-columns: 1fr; }
+    section { padding: 3.25rem 0; }
+    .hero { padding: 3.5rem 0 3.25rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <nav class="nav">
+    <a href="#" class="brand"><img src="assets/icon.png" alt="Aloe Scribe leaf icon">Aloe Scribe</a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#speakers">Speakers</a>
+      <a href="#data">Your data</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <a href="#download" class="btn small">Download</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="kicker">For Mac and Windows</p>
+    <h1>The private meeting notepad.</h1>
+    <p class="lede">Aloe Scribe records, transcribes, and summarizes your meetings entirely on your computer. No bot joins the call. Your audio never leaves the machine, and that is the architecture, not a policy promise.</p>
+    <div class="actions">
+      <a href="#download" class="btn">Download Aloe Scribe</a>
+      <a href="#data" class="btn ghost">See where your data goes</a>
+    </div>
+    <p class="caption">Free while in beta. No account. No upload. Transcript lands seconds after the meeting ends.</p>
+
+    <div class="note-card" aria-label="Example transcript file">
+      <p class="file">~/meetings/2026-04-07-1400-weekly-sync.md</p>
+      <p class="sec">Summary</p>
+      <p>Timeline review for the API launch. Deadline confirmed for next Friday.</p>
+      <p class="sec">Action items</p>
+      <p>Priya sends the revised SOW by Friday.</p>
+      <p class="sec">Transcript</p>
+      <p class="t">[00:00] <b>Vince:</b> Hey, so today we need to discuss the timeline.<br>
+      [00:14] <b>Priya:</b> Right, the API deadline is next Friday.</p>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <p class="kicker">Why local</p>
+    <h2>The bot in your meeting is someone else's server.</h2>
+    <p>Every funded meeting notetaker works the same way. A bot joins the call, or the app uploads your audio, and a vendor's cloud does the transcription. That design has caught up with the industry. Cloud notetaker vendors are now facing wiretap class actions because their servers received meeting audio. Universities blocklist notetaker bots, and Teams can flag or deny them. In one survey, 84 percent of professionals said they self-censor when an AI notetaker joins the call.</p>
+    <p>Aloe Scribe is built the other way around. The recording, the transcription, the speaker identification, and the summary all happen on your computer. There is no bot, so there is nothing for platforms to flag. There is no upload, so it is structurally impossible for us to see your data. No training on your content, ever.</p>
+    <p>One honest note. Running locally does not waive recording consent laws. Where the law or your policy requires it, tell people you are recording.</p>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <p class="kicker">How it works</p>
+    <h2>Press record. Get a finished document.</h2>
+    <ol class="steps">
+      <li>
+        <h3>Start recording</h3>
+        <p>Aloe Scribe captures your microphone and your computer's system audio on separate channels. It works with Zoom, Teams, Meet, or any app that plays sound, with no bot in the participant list.</p>
+      </li>
+      <li>
+        <h3>Watch the live transcript</h3>
+        <p>Text appears on screen as people talk, so you know it is working. A notepad sits alongside it for anything you want to jot down.</p>
+      </li>
+      <li>
+        <h3>Tag speakers as they talk</h3>
+        <p>Click a name once while someone is speaking. Aloe Scribe names everything else that voice says, in this meeting and the next.</p>
+      </li>
+      <li>
+        <h3>Stop, and the transcript lands</h3>
+        <p>Seconds after you hit stop, a clean Markdown file is on disk with a summary and action items written by a language model that also runs on your machine.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="speakers">
+  <div class="wrap">
+    <p class="kicker">Speaker names</p>
+    <h2>It knows who said what. Acoustically.</h2>
+    <p>Most notetakers guess speakers from the meeting platform's metadata, which falls apart in conference rooms and on phone bridges. Aloe Scribe identifies speakers from the audio itself.</p>
+    <p>Because the mic and system audio are separate channels, which side of the call a line came from is a fact, not a guess. Within each side, on-device speaker identification tells voices apart. Tag a voice once during the call and majority voting names that voice's entire cluster, past lines included.</p>
+    <p>Voice fingerprints are stored only on your device, so colleagues you have tagged before are recognized in future meetings without tagging again.</p>
+  </div>
+</section>
+
+<section id="data">
+  <div class="wrap">
+    <p class="kicker">Where your data goes</p>
+    <h2>Audio in. Transcript on disk. Nothing out.</h2>
+    <p>This section doubles as the security one-pager. Show it to your IT or compliance team.</p>
+    <div class="table-scroll">
+    <table class="flow">
+      <tr>
+        <th>Audio in</th>
+        <td>Your microphone and your computer's own audio output, captured locally. No video is captured.</td>
+      </tr>
+      <tr>
+        <th>Processing</th>
+        <td>Transcription, speaker identification, and the summary all run on your CPU and GPU. No audio upload. No cloud transcription.</td>
+      </tr>
+      <tr>
+        <th>Storage</th>
+        <td>Open Markdown files with structured metadata, saved to a folder you choose. Voice fingerprints for speaker recognition stay on the device.</td>
+      </tr>
+      <tr>
+        <th>Network</th>
+        <td>The only network calls are downloading the app and its models. No accounts. No telemetry on meeting content.</td>
+      </tr>
+    </table>
+    </div>
+    <p>Your transcripts are built to feed your own tools. The Markdown metadata is readable by Glean, Copilot, and anything else you point at the folder. Obsidian vault mode links attendees as wikilinks, so every meeting shows up on each person's page.</p>
+    <p class="caption">Local capture does not waive consent laws. Disclose recording where your jurisdiction or client agreements require it.</p>
+  </div>
+</section>
+
+<section id="requirements">
+  <div class="wrap">
+    <p class="kicker">System requirements</p>
+    <h2>It runs on your hardware, so the hardware matters.</h2>
+    <div class="cols">
+      <div class="card">
+        <h3>Mac</h3>
+        <ul>
+          <li>Apple Silicon (M1 or later)</li>
+          <li>macOS 13 or newer</li>
+          <li>8 GB RAM minimum, 16 GB recommended</li>
+          <li>12 GB free disk</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Windows <span class="badge">Beta</span></h3>
+        <ul>
+          <li>64-bit Windows 10 or 11</li>
+          <li>CPU with AVX2, 4 cores or more</li>
+          <li>8 GB RAM</li>
+          <li>6 GB free disk</li>
+        </ul>
+        <p class="caption" style="margin-top:0.7rem">The Windows version does not yet include summaries or echo cancellation.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <p class="kicker">Download</p>
+    <h2>Get Aloe Scribe</h2>
+    <p>Free while in beta. Pricing will be announced later.</p>
+
+    <div class="dl-card">
+      <h3>Mac</h3>
+      <p style="margin-top:0.4rem">Paste this into Terminal. It installs the app and its models in one step.</p>
+      <pre class="cmd" id="mac-cmd">bash -c "$(curl -fsSL https://raw.githubusercontent.com/vinnybarbs/Aloe-Scribe/main/scripts/get-mac.sh)"</pre>
+      <div class="copy-row">
+        <button class="btn small" id="copy-btn" onclick="copyCmd()">Copy command</button>
+        <span class="caption">A one-click notarized installer is coming.</span>
+      </div>
+    </div>
+
+    <div class="dl-card">
+      <h3>Windows <span class="badge">Beta</span></h3>
+      <p style="margin-top:0.4rem">Direct download, 1.4 GB. The installer bundles the transcription model, so the installed app works offline.</p>
+      <div class="copy-row" style="margin-top:0.9rem">
+        <a class="btn" href="https://github.com/vinnybarbs/Aloe-Scribe/releases/download/windows-v0.1/AloeScribeSetup.exe">Download for Windows</a>
+      </div>
+      <p class="caption" style="margin-top:0.7rem">The beta installer is unsigned, so Windows SmartScreen will warn you. Click "More info", then "Run anyway". The Windows beta does not yet include summaries or echo cancellation.</p>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <p class="kicker">FAQ</p>
+    <h2>Questions people ask</h2>
+
+    <details>
+      <summary>Is this legal to use?</summary>
+      <p>Aloe Scribe is a recording tool, and recording laws depend on where you and the other participants are. Some places require everyone's consent, others require one party's. Running locally does not change those rules, so disclose that you are recording where the law or your professional obligations require it. When in doubt, ask, the same as you would with any recorder.</p>
+    </details>
+
+    <details>
+      <summary>Why is there no bot?</summary>
+      <p>A bot exists so a vendor's server can hear your meeting. Aloe Scribe transcribes on your computer, so it does not need one. It captures the audio your computer is already playing and the audio your mic is already hearing. Nothing joins the call, nothing shows up in the participant list, and there is nothing for the meeting platform to flag or block.</p>
+    </details>
+
+    <details>
+      <summary>Does it work with Teams, Zoom, and Meet?</summary>
+      <p>Yes. Aloe Scribe captures system audio, so it works with any app that plays sound. That includes Teams, Zoom, Meet, Webex, Slack huddles, phone calls routed through your computer, and webinars. It also records in-person meetings with the mic alone.</p>
+    </details>
+
+    <details>
+      <summary>What does it cost?</summary>
+      <p>It is currently free while in beta. Pricing will be announced. There is no account, so there is nothing to sign up for now and nothing that expires.</p>
+    </details>
+
+    <details>
+      <summary>Does it need an internet connection?</summary>
+      <p>Only to download the app and its models. After installation, recording, transcription, speaker identification, and summaries all work offline.</p>
+    </details>
+
+    <details>
+      <summary>What format are the transcripts?</summary>
+      <p>Plain Markdown files with a structured metadata header, saved to a folder you choose. They open in any editor and are built to feed your own AI tools, including Glean, Copilot, and Obsidian. Obsidian vault mode links attendees as wikilinks.</p>
+    </details>
+  </div>
+</section>
+
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p class="brand"><img src="assets/icon.png" alt="">Aloe Scribe</p>
+    <p>The private meeting notepad. Your audio never leaves the machine.</p>
+    <p><a href="https://github.com/vinnybarbs/Aloe-Scribe">GitHub</a></p>
+  </div>
+</footer>
+
+<script>
+function copyCmd() {
+  var text = document.getElementById('mac-cmd').textContent;
+  var btn = document.getElementById('copy-btn');
+  function done() {
+    btn.textContent = 'Copied';
+    setTimeout(function () { btn.textContent = 'Copy command'; }, 2000);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done);
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    done();
+  }
+}
+</script>
+
+</body>
+</html>
