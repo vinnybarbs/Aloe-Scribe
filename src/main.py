@@ -8,6 +8,7 @@ Or install as a systemd service (see scripts/install.sh)
 
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -339,6 +340,9 @@ class AloeScribe:
             summarizer_enabled=self._summarizer_enabled,
             summarizer_available=(sys.platform == "darwin"),
             on_summarizer_toggle=self._on_summarizer_toggle,
+            on_self_update=(
+                self._self_update if sys.platform == "darwin" else None
+            ),
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -393,6 +397,34 @@ class AloeScribe:
             config_text,
         )
         CONFIG_PATH.write_text(config_text)
+
+    def _self_update(self):
+        """The in-app Update button: hand off to update-mac.sh in a detached
+        shell, quit so the rebuild never races the running app (replacing
+        the bundle under a live process corrupts its lazy imports), and the
+        script's finish reopens the new build. Returns an error message for
+        the UI, or None when the handoff started."""
+        script = Path.home() / "aloe-scribe" / "scripts" / "update-mac.sh"
+        if not script.exists():
+            return (
+                "Updater not found. This install did not come from the "
+                "standard setup, update from the aloe-scribe folder instead."
+            )
+        if self._jobs_inflight > 0:
+            return "A transcript is still processing. Try again in a minute."
+        log.info("Self-update starting — quitting for the updater")
+        subprocess.Popen(
+            [
+                "/bin/bash", "-c",
+                f"sleep 3; /bin/bash '{script}' > /tmp/aloe-update.log 2>&1; "
+                "open -a 'Aloe Scribe'",
+            ],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self._quit()
+        return None
 
     def _on_summarizer_toggle(self, enabled: bool):
         """UI checkbox for the local summary block. Applies immediately and

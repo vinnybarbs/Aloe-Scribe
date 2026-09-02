@@ -795,6 +795,7 @@ class AloeScribeWindow(QMainWindow):
         summarizer_enabled: bool = True,
         summarizer_available: bool = False,
         on_summarizer_toggle: Callable = None,
+        on_self_update: Callable = None,
         live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
@@ -815,6 +816,7 @@ class AloeScribeWindow(QMainWindow):
         self._summarizer_enabled = summarizer_enabled
         self._summarizer_available = summarizer_available
         self._on_summarizer_toggle = on_summarizer_toggle
+        self._on_self_update = on_self_update
         self._on_merge_transcripts = on_merge_transcripts
         self._notes_window: Optional[NotesWindow] = None
         self._live_preview_enabled = live_preview
@@ -1351,8 +1353,46 @@ class AloeScribeWindow(QMainWindow):
         go = QPushButton("Recordings…")
         go.setObjectName("btnSkip")
         go.clicked.connect(self._open_recordings)
-        self._content_layout.addWidget(go)
+        if self._on_self_update:
+            row = QHBoxLayout()
+            row.addWidget(go, 1)
+            upd = QPushButton("Update…")
+            upd.setObjectName("btnSkip")
+            upd.setToolTip(
+                "Close the app, install the latest version, and reopen. "
+                "Takes a few minutes."
+            )
+            upd.clicked.connect(self._do_self_update)
+            row.addWidget(upd, 0)
+            self._content_layout.addLayout(row)
+        else:
+            self._content_layout.addWidget(go)
         return True
+
+    def _do_self_update(self):
+        if self._state != "idle":
+            QMessageBox.information(
+                self, "Aloe Scribe",
+                "Finish the current recording before updating.",
+            )
+            return
+        resp = QMessageBox.question(
+            self,
+            "Update Aloe Scribe",
+            "Install the latest version now?\n\nThe app closes, updates, "
+            "and reopens by itself. Takes a few minutes.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        err = None
+        try:
+            err = self._on_self_update()
+        except Exception as e:
+            err = str(e)
+        if err:
+            QMessageBox.warning(self, "Aloe Scribe", err)
 
     def _resolved_output_dir(self) -> Path:
         return (
@@ -1973,7 +2013,7 @@ class AloeScribeApp:
                  on_meta_changed=None, on_save_transcript=None,
                  on_merge_transcripts=None, on_resummarize=None,
                  summarizer_enabled=True, summarizer_available=False,
-                 on_summarizer_toggle=None,
+                 on_summarizer_toggle=None, on_self_update=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1992,6 +2032,7 @@ class AloeScribeApp:
         self._summarizer_enabled = summarizer_enabled
         self._summarizer_available = summarizer_available
         self._on_summarizer_toggle = on_summarizer_toggle
+        self._on_self_update = on_self_update
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -2039,6 +2080,7 @@ class AloeScribeApp:
             summarizer_enabled=self._summarizer_enabled,
             summarizer_available=self._summarizer_available,
             on_summarizer_toggle=self._on_summarizer_toggle,
+            on_self_update=self._on_self_update,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,

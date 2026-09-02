@@ -20,3 +20,4 @@ config/config.toml
 
 # Parakeet model weights — fetched from GitHub Release at install time
 models/
+.agents/
