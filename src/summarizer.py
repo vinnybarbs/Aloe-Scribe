@@ -100,9 +100,15 @@ final = run(
     1400,
 )
 
+# The user's typed notes are ground truth for the judges — but only the
+# note text itself: attaching the whole metadata head biased every verdict
+# to "contradicted" in testing.
+import re as _re
+_notes_m = _re.search(r"## Notes\n(.*?)(?=^## |\Z)", job["head"], _re.M | _re.S)
+user_notes = (_notes_m.group(1).strip() if _notes_m else "").strip() or "(none)"
+
 # Verify pass: small models keep promoting background facts to "decisions".
 # Ask about each candidate line and drop the ones that fail.
-import re as _re
 m = _re.search(r"^## Decisions\n(.*?)(?=^## |\Z)", final, flags=_re.M | _re.S)
 if m:
     kept = []
@@ -171,6 +177,42 @@ if m:
         kept.append("- " + s)
     body = "\n".join(kept) if kept else "None captured."
     final = final[: m.start(1)] + body + "\n\n" + final[m.end(1):]
+
+# Faithfulness pass over Summary and Action items: the polarity guard on
+# Decisions is not enough — a reversed plan can leak back in as a summary
+# bullet or an action item. Drop lines the evidence contradicts; keep
+# accurate and merely-unsure lines so paraphrase is not punished.
+for section in ("Summary", "Action items"):
+    m = _re.search(
+        r"^## " + section + r"\n(.*?)(?=^## |\Z)", final, flags=_re.M | _re.S
+    )
+    if not m:
+        continue
+    kept = []
+    for line in m.group(1).splitlines():
+        s = line.strip().lstrip("-*• ").strip()
+        if not s or s == "None captured." or s.lower().startswith("attendees:"):
+            kept.append(line)
+            continue
+        verdict = run(
+            "Meeting evidence:\n" + evidence
+            + "\n\nThe user's own typed notes. These are ground truth and "
+            "OVERRIDE the dialogue when they conflict:\n" + user_notes
+            + "\n\nNow check ONE statement from a draft summary against "
+            "the evidence and notes above.\n"
+            "Answer 'contradicted' ONLY if the notes or evidence show the "
+            "participants rejected, reversed, or walked back what this "
+            "specific statement asserts. Answer 'accurate' if it is "
+            "supported. Answer 'unsure' if it is neither supported nor "
+            "reversed.\n\nStatement: " + s
+            + "\n\nAnswer with exactly one word: accurate, contradicted, "
+            "or unsure.",
+            10,
+        ).strip().lower()
+        if verdict.startswith("contradicted"):
+            continue
+        kept.append(line)
+    final = final[: m.start(1)] + "\n".join(kept).strip() + "\n\n" + final[m.end(1):]
 sys.stdout.write(final)
 """
 
