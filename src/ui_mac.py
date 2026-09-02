@@ -153,6 +153,17 @@ _STYLESHEET = """
 
     QFrame#separator { background-color: #EEF2EE; max-height: 1px; border: none; }
 
+    QCheckBox {
+        font-size: 12px; color: #4A554D; spacing: 8px;
+    }
+    QCheckBox::indicator {
+        width: 16px; height: 16px; border-radius: 5px;
+        border: 1px solid #CFE0D4; background-color: #F5F8F5;
+    }
+    QCheckBox::indicator:hover { border: 1px solid #2F8F5B; }
+    QCheckBox::indicator:checked {
+        background-color: #2F8F5B; border: 1px solid #2F8F5B;
+    }
     QComboBox {
         font-size: 13px; color: #1E2A23;
         background-color: #F5F8F5;
