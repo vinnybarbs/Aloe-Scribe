@@ -1090,6 +1090,48 @@ def _label_and_render(
         ]
         if len(unassigned) == 1 and len(anon_keys) == 1:
             label_map[anon_keys[0]] = unassigned[0]
+        elif not unassigned and anon_keys:
+            # Every attendee is already assigned, so a leftover anonymous
+            # cluster cannot be a new person — it is an over-split fragment
+            # of a named voice. Merge it into the named speaker on its own
+            # channel when that is unambiguous; with several named speakers
+            # on the channel, let the voice fingerprints decide, and leave
+            # it anonymous when neither settles it.
+            import re as _re
+
+            _anon = _re.compile(r"^(M|R)\d+$")
+            for key in list(anon_keys):
+                ch = key[0]
+                named_same_ch = {
+                    k: v for k, v in label_map.items()
+                    if k[0] == ch and not _anon.match(v)
+                }
+                names = sorted(set(named_same_ch.values()))
+                if len(names) == 1:
+                    label_map[key] = names[0]
+                    continue
+                if len(names) > 1 and centroids:
+                    vec = (centroids.get(ch) or {}).get(key[1])
+                    if not vec:
+                        continue
+                    import math as _math
+
+                    def _cos(a, b):
+                        num = sum(x * y for x, y in zip(a, b))
+                        da = _math.sqrt(sum(x * x for x in a))
+                        db = _math.sqrt(sum(x * x for x in b))
+                        return num / (da * db) if da > 0 and db > 0 else 0.0
+
+                    scored = []
+                    for k, v in named_same_ch.items():
+                        other = (centroids.get(ch) or {}).get(k[1])
+                        if other:
+                            scored.append((_cos(vec, other), v))
+                    scored.sort(reverse=True)
+                    if scored and scored[0][0] > 0.5 and (
+                        len(scored) == 1 or scored[0][0] - scored[1][0] > 0.1
+                    ):
+                        label_map[key] = scored[0][1]
 
     # Named clusters carry a voice fingerprint worth keeping: enrollment
     # rides the naming gestures, so a tagged colleague can be recognized in
