@@ -593,10 +593,36 @@ final class MicCapture: @unchecked Sendable {
     private var stopFlag = false
     private(set) var buffersReceived: Int = 0
     private var engine: AVAudioEngine?
+    private var vpioPeak: Int16 = 0
 
     init(mixer: Mixer, deviceName: String) {
         self.mixer = mixer
         self.deviceName = deviceName
+    }
+
+    /// True when the default input is the machine's BUILT-IN mic. Voice
+    /// processing is only safe there: Bluetooth and USB inputs (AirPods,
+    /// Jabra) delivered all-zero audio through VPIO in the field, and those
+    /// devices carry their own hardware echo cancellation anyway.
+    static func defaultInputIsBuiltIn() -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var devID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                         &addr, 0, nil, &size, &devID) == noErr,
+              devID != kAudioObjectUnknown else { return false }
+        var tAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport = UInt32(0)
+        var tSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(devID, &tAddr, 0, nil, &tSize, &transport) == noErr
+        else { return false }
+        return transport == kAudioDeviceTransportTypeBuiltIn
     }
 
     static func defaultInputDeviceName() -> String? {
@@ -661,6 +687,9 @@ final class MicCapture: @unchecked Sendable {
             let n = Int(out.frameLength)
             guard n > 0, let ch = out.int16ChannelData?[0] else { return }
             let samples = Array(UnsafeBufferPointer(start: ch, count: n))
+            for s in samples where abs(Int32(s)) > Int32(self.vpioPeak) {
+                self.vpioPeak = Int16(min(Int32(Int16.max), abs(Int32(s))))
+            }
             self.buffersReceived += 1
             if self.buffersReceived == 1 {
                 eprint("MicCapture(VPIO): first buffer received (\(n) frames)")
@@ -730,18 +759,20 @@ final class MicCapture: @unchecked Sendable {
         // Prefer Apple voice processing (echo cancellation) when the chosen
         // mic is the system default input. ALOE_NO_AEC=1 forces raw capture.
         if ProcessInfo.processInfo.environment["ALOE_NO_AEC"] == nil,
+           MicCapture.defaultInputIsBuiltIn(),
            let defName = MicCapture.defaultInputDeviceName(),
            defName.lowercased() == deviceName.lowercased() {
             do {
                 try startVPIO()
                 // If voice processing yields no audio (quirky device, odd
                 // aggregate), fall back to raw ffmpeg capture automatically.
-                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                    guard let self = self, !self.stopFlag,
-                          self.buffersReceived == 0 else { return }
-                    eprint("VPIO produced no audio in 3s — falling back to raw capture")
-                    self.stopVPIO()
-                    try? self.startFFmpeg()
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 4.0) { [weak self] in
+                    guard let self = self, !self.stopFlag else { return }
+                    if self.buffersReceived == 0 || self.vpioPeak == 0 {
+                        eprint("VPIO delivered \(self.buffersReceived == 0 ? "no" : "silent") audio in 4s — falling back to raw capture")
+                        self.stopVPIO()
+                        try? self.startFFmpeg()
+                    }
                 }
                 return
             } catch {
