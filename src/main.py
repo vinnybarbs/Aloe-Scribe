@@ -336,6 +336,9 @@ class AloeScribe:
             on_save_transcript=self._on_save_transcript_edits,
             on_merge_transcripts=self._merge_transcript_files,
             on_resummarize=self._resummarize_existing,
+            summarizer_enabled=self._summarizer_enabled,
+            summarizer_available=(sys.platform == "darwin"),
+            on_summarizer_toggle=self._on_summarizer_toggle,
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
@@ -390,6 +393,35 @@ class AloeScribe:
             config_text,
         )
         CONFIG_PATH.write_text(config_text)
+
+    def _on_summarizer_toggle(self, enabled: bool):
+        """UI checkbox for the local summary block. Applies immediately and
+        persists to config.toml, section-aware since `enabled` could appear
+        under other section headers someday."""
+        self._summarizer_enabled = bool(enabled)
+        log.info(f"Local summaries {'enabled' if enabled else 'disabled'}")
+        import re
+
+        try:
+            text = CONFIG_PATH.read_text()
+            val = "true" if enabled else "false"
+            m = re.search(r"(?ms)^\[summarizer\]\n(.*?)(?=^\[|\Z)", text)
+            if m and re.search(r"(?m)^enabled\s*=", m.group(1)):
+                section = re.sub(
+                    r"(?m)^(enabled\s*=\s*)\S+", rf"\g<1>{val}",
+                    m.group(1), count=1,
+                )
+                text = text[: m.start(1)] + section + text[m.end(1):]
+            elif m:
+                text = (
+                    text[: m.start(1)] + f"enabled = {val}\n"
+                    + m.group(1) + text[m.end(1):]
+                )
+            else:
+                text = text.rstrip() + f"\n\n[summarizer]\nenabled = {val}\n"
+            CONFIG_PATH.write_text(text)
+        except Exception as e:
+            log.warning(f"Could not persist summarizer setting: {e}")
 
     def _on_output_dir_change(self, new_dir: str):
         """Called by UI when the user picks a new transcript destination."""

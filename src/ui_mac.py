@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
     QMenu,
     QFrame,
+    QCheckBox,
     QComboBox,
     QProgressBar,
     QFileDialog,
@@ -780,6 +781,9 @@ class AloeScribeWindow(QMainWindow):
         on_save_transcript: Callable = None,
         on_merge_transcripts: Callable = None,
         on_resummarize: Callable = None,
+        summarizer_enabled: bool = True,
+        summarizer_available: bool = False,
+        on_summarizer_toggle: Callable = None,
         live_preview: bool = False,
         current_mic: str = "",
         current_system: str = "",
@@ -797,6 +801,9 @@ class AloeScribeWindow(QMainWindow):
         self._on_meta_changed = on_meta_changed
         self._on_save_transcript = on_save_transcript
         self._on_resummarize = on_resummarize
+        self._summarizer_enabled = summarizer_enabled
+        self._summarizer_available = summarizer_available
+        self._on_summarizer_toggle = on_summarizer_toggle
         self._on_merge_transcripts = on_merge_transcripts
         self._notes_window: Optional[NotesWindow] = None
         self._live_preview_enabled = live_preview
@@ -1082,10 +1089,15 @@ class AloeScribeWindow(QMainWindow):
         # Output folder picker
         self._build_output_folder_row()
 
+        # Local summarizer toggle (Mac only — the model rides Apple's mlx)
+        self._build_summary_toggle_row()
+
         # "Transcribe a file…" button: opens a picker so any audio file can
         # be transcribed (recovery of failed recordings, or external files).
         has_transcribe = self._build_transcribe_file_row()
         base = 586 if self._system_on() else 536  # includes the law fine-print line  # +50 for the system-audio meter
+        if self._summarizer_available:
+            base += 30  # the local-summary checkbox row
         self.setFixedSize(344, base + (56 if has_transcribe else 0))
 
         btn = QPushButton("Start recording")
@@ -1235,6 +1247,31 @@ class AloeScribeWindow(QMainWindow):
         row.addWidget(choose, 0)
 
         self._content_layout.addLayout(row)
+
+    def _build_summary_toggle_row(self):
+        """Checkbox for the on-device summary block. Off means transcripts
+        end at the transcript — for users whose enterprise AI (Glean,
+        Copilot) owns the summarizing. Hidden where no local model runs."""
+        if not self._summarizer_available:
+            return
+        box = QCheckBox("Write a local summary into each transcript")
+        box.setChecked(bool(self._summarizer_enabled))
+        box.setToolTip(
+            "The on-device model adds Summary, Decisions, Action items and "
+            "Open questions after each meeting. Turn off if your own AI "
+            "tools do the summarizing — the transcript itself is unaffected."
+        )
+
+        def _toggled(checked: bool):
+            self._summarizer_enabled = bool(checked)
+            if self._on_summarizer_toggle:
+                try:
+                    self._on_summarizer_toggle(bool(checked))
+                except Exception as e:
+                    log.warning(f"Summarizer toggle failed: {e}")
+
+        box.toggled.connect(_toggled)
+        self._content_layout.addWidget(box)
 
     @staticmethod
     def _pretty_output_path(full: str) -> tuple[str, str]:
@@ -1924,6 +1961,8 @@ class AloeScribeApp:
                  on_name_speakers=None, processing_check=None,
                  on_meta_changed=None, on_save_transcript=None,
                  on_merge_transcripts=None, on_resummarize=None,
+                 summarizer_enabled=True, summarizer_available=False,
+                 on_summarizer_toggle=None,
                  live_preview=False,
                  current_mic="", current_system="", current_output_dir=""):
         self._on_start_recording = on_start_recording
@@ -1939,6 +1978,9 @@ class AloeScribeApp:
         self._on_save_transcript = on_save_transcript
         self._on_merge_transcripts = on_merge_transcripts
         self._on_resummarize = on_resummarize
+        self._summarizer_enabled = summarizer_enabled
+        self._summarizer_available = summarizer_available
+        self._on_summarizer_toggle = on_summarizer_toggle
         self._live_preview = live_preview
         self._current_mic = current_mic
         self._current_system = current_system
@@ -1983,6 +2025,9 @@ class AloeScribeApp:
             on_save_transcript=self._on_save_transcript,
             on_merge_transcripts=self._on_merge_transcripts,
             on_resummarize=self._on_resummarize,
+            summarizer_enabled=self._summarizer_enabled,
+            summarizer_available=self._summarizer_available,
+            on_summarizer_toggle=self._on_summarizer_toggle,
             live_preview=self._live_preview,
             current_mic=self._current_mic,
             current_system=self._current_system,
