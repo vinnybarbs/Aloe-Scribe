@@ -162,17 +162,12 @@ if m:
             + "\n\nAnswer with exactly one word: adopted, rejected, or open.",
             10,
         ).strip().lower()
-        if polarity.startswith("rejected"):
-            fixed = run(
-                "The meeting considered this and decided AGAINST it: " + s
-                + "\n\nRewrite as one plain line stating what was decided "
-                "against, beginning with \"Not to\". Output only the line.",
-                60,
-            ).strip().splitlines()[0].strip().lstrip("-*• ").strip()
-            if fixed:
-                kept.append("- " + fixed)
-            continue
-        if polarity.startswith("open"):
+        if not polarity.startswith("adopted"):
+            # Rejected or open: DROP, never rewrite. Manufacturing a
+            # "Decided NOT to" from a soft leaning asserts a rejection the
+            # meeting never firmly made — the same wrong-direction failure
+            # in mirror image. Real rejections arrive from extraction
+            # already phrased as rejections and score "adopted" here.
             continue
         kept.append("- " + s)
     body = "\n".join(kept) if kept else "None captured."

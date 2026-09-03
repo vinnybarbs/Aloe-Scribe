@@ -46,7 +46,7 @@ for pkg in ("ctranslate2", "faster_whisper", "av", "pyaudiowpatch", "tokenizers"
         # Package not installed at build time. The build will surface it.
         pass
 
-hiddenimports += collect_submodules("PyQt6")
+hiddenimports += collect_submodules("PySide6")
 
 block_cipher = None
 

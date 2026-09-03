@@ -55,7 +55,7 @@ OPTIONS = {
         "cmath",
     ],
     "packages": [
-        "PyQt6",
+        "PySide6",
         "PIL",
         "objc",
         "AppKit",

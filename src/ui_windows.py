@@ -1,7 +1,7 @@
 """
 ui_windows.py — Windows UI for Aloe Scribe.
 
-Reuses the PyQt6 window and app from ui_mac.py (the design, layout, live
+Reuses the PySide6 window and app from ui_mac.py (the design, layout, live
 preview, and all the recording controls) and overrides only the two pieces
 that are Apple-specific:
 
@@ -22,9 +22,9 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
 from ui_mac import AloeScribeWindow, AloeScribeApp, _make_leaf_icon
 

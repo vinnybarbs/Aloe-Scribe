@@ -103,7 +103,7 @@ else
     echo "  ⚠ Detected Intel Mac (arch=$ARCH). parakeet-mlx requires Apple Silicon."
     echo "    Installing base deps + falling back to whisper.cpp."
     "$VENV_DIR/bin/pip" install -q \
-        "PyQt6>=6.6.0" "pyobjc-framework-Cocoa>=10.0" "pillow>=10.0.0" \
+        "PySide6>=6.6.0" "pyobjc-framework-Cocoa>=10.0" "pillow>=10.0.0" \
         "tomli>=2.0.0" "py2app>=0.28.0"
     INSTALL_WHISPER=1
     sed -i '' 's|^backend\s*=\s*"parakeet"|backend = "whisper"|' "$PROJECT_DIR/config/config.toml"

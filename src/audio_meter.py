@@ -3,7 +3,7 @@ audio_meter.py — Live audio level reader.
 
 Spawns a subprocess that streams 16-bit signed little-endian PCM at 16 kHz
 mono on stdout, computes the absolute peak of each ~100 ms chunk, and reports
-it via a callback. Used by the GTK and PyQt6 UIs to draw VU bars next to the
+it via a callback. Used by the GTK and PySide6 UIs to draw VU bars next to the
 device dropdowns and during recording.
 
 Two factories build the right command for the current platform:

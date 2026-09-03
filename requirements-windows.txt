@@ -8,8 +8,8 @@
 #   uv pip compile requirements-windows.in --generate-hashes
 # Listed here unpinned during the initial port; pin before distributing.
 
-# UI (PyQt6 is cross-platform; the Windows UI reuses it with a Qt system tray)
-PyQt6==6.11.0
+# UI (PySide6 is cross-platform; the Windows UI reuses it with a Qt system tray)
+PySide6==6.11.0
 pillow==12.2.0
 tomli==2.4.1; python_version < "3.11"
 

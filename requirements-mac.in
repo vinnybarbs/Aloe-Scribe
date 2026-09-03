@@ -1,7 +1,7 @@
 # Top-level desktop dependencies (macOS, Apple Silicon). Pinned to the
 # known-good versions; the full transitive tree + hashes are locked into
 # requirements-mac.txt via:  uv pip compile requirements-mac.in --generate-hashes
-PyQt6==6.11.0
+PySide6==6.11.0
 pyobjc-framework-Cocoa==12.1
 pillow==12.2.0
 tomli==2.4.1

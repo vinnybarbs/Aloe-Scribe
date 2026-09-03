@@ -98,23 +98,23 @@ else
 fi
 
 # -----------------------------------------------------------
-# 7. PyQt6
+# 7. PySide6
 # -----------------------------------------------------------
-printf "%-40s" "7. PyQt6"
+printf "%-40s" "7. PySide6"
 VENV_PYTHON="$(dirname "$0")/../.venv/bin/python3"
 if [ -x "$VENV_PYTHON" ]; then
-    if "$VENV_PYTHON" -c "from PyQt6.QtWidgets import QApplication; print('ok')" 2>/dev/null | grep -q ok; then
+    if "$VENV_PYTHON" -c "from PySide6.QtWidgets import QApplication; print('ok')" 2>/dev/null | grep -q ok; then
         echo -e "[$PASS]"
     else
-        echo -e "[$FAIL] PyQt6 not installed in venv"
-        echo "         Run: .venv/bin/pip install PyQt6"
+        echo -e "[$FAIL] PySide6 not installed in venv"
+        echo "         Run: .venv/bin/pip install PySide6"
     fi
 else
     # Try system python
-    if python3 -c "from PyQt6.QtWidgets import QApplication" 2>/dev/null; then
+    if python3 -c "from PySide6.QtWidgets import QApplication" 2>/dev/null; then
         echo -e "[$PASS] (system python)"
     else
-        echo -e "[$FAIL] PyQt6 not found"
+        echo -e "[$FAIL] PySide6 not found"
     fi
 fi
 

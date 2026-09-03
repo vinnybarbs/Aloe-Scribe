@@ -1,5 +1,5 @@
 """
-ui_mac.py — Aloe Scribe macOS UI using PyQt6.
+ui_mac.py — Aloe Scribe macOS UI using PySide6.
 
 Provides a floating window, dock icon, and system tray icon (menu bar).
 Single-instance: re-launching activates the existing window.
@@ -13,9 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
-from PyQt6.QtCore import Qt, QTimer, QPoint, QEvent, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPolygon, QPen, QAction, QTextCursor, QTextCharFormat
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, Signal, QObject
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPolygon, QPen, QAction, QTextCursor, QTextCharFormat
+from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
@@ -220,21 +220,21 @@ _STYLESHEET = """
 # Signals bridge — thread-safe state updates from background threads
 # ---------------------------------------------------------------------------
 class _Signals(QObject):
-    set_recording = pyqtSignal(object)
-    set_processing = pyqtSignal()
-    set_done = pyqtSignal(object)
-    set_idle = pyqtSignal()
-    mic_level = pyqtSignal(float)
-    sys_level = pyqtSignal(float)
-    live_preview_append = pyqtSignal(str)
-    live_preview_set = pyqtSignal(str)
-    live_preview_clear = pyqtSignal()
-    live_preview_status = pyqtSignal(str)
-    show_error = pyqtSignal(str)
-    prompt_speaker_names = pyqtSignal(object)  # (quotes, apply_callback)
-    processing_status = pyqtSignal(str)
-    processing_draft = pyqtSignal(str)
-    notes_final = pyqtSignal(object)  # (path, transcript_text)
+    set_recording = Signal(object)
+    set_processing = Signal()
+    set_done = Signal(object)
+    set_idle = Signal()
+    mic_level = Signal(float)
+    sys_level = Signal(float)
+    live_preview_append = Signal(str)
+    live_preview_set = Signal(str)
+    live_preview_clear = Signal()
+    live_preview_status = Signal(str)
+    show_error = Signal(str)
+    prompt_speaker_names = Signal(object)  # (quotes, apply_callback)
+    processing_status = Signal(str)
+    processing_draft = Signal(str)
+    notes_final = Signal(object)  # (path, transcript_text)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ class RecordingsDialog(QDialog):
         self.setStyleSheet(_STYLESHEET)
         self.resize(480, 420)
 
-        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
 
         layout = QVBoxLayout(self)
         cap = QLabel(str(output_dir))
@@ -2171,7 +2171,7 @@ class AloeScribeApp:
 
     def _on_app_state_changed(self, state):
         """Handle dock icon clicks — re-show window when app is activated."""
-        from PyQt6.QtCore import Qt as QtCore_Qt
+        from PySide6.QtCore import Qt as QtCore_Qt
         if state == Qt.ApplicationState.ApplicationActive and self._window:
             self._show_window()
 
