@@ -503,7 +503,17 @@ class NotesWindow(QWidget):
         completer = QCompleter(sorted(set(history)))
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._attendee_edit.setCompleter(completer)
+        # Accepting a completion (Enter with the popup open) is swallowed by
+        # the completer, so returnPressed never fired and the name sat in
+        # the field waiting for a second Enter. Add and clear directly.
+        completer.activated.connect(
+            lambda _name: QTimer.singleShot(0, self._add_attendee)
+        )
         bot_l.addWidget(self._attendee_edit)
+        self._tag_caption = QLabel("Click who is speaking:")
+        self._tag_caption.setObjectName("deviceLabel")
+        self._tag_caption.setVisible(False)
+        bot_l.addWidget(self._tag_caption)
         self._tag_chips = QHBoxLayout()
         bot_l.addLayout(self._tag_chips)
 
@@ -572,6 +582,7 @@ class NotesWindow(QWidget):
         self._notes_log.setPlainText("")
         self._tag_status.setText("")
         self._speaker_combo.clear()
+        self._attendee_edit.clear()
         self._title_edit.setText("")
 
     def _elapsed(self) -> float:
@@ -628,6 +639,7 @@ class NotesWindow(QWidget):
         chip.setToolTip(f"Click while {name} is talking to assign them")
         chip.clicked.connect(lambda _=False, n=name: self._record_tag(n))
         self._tag_chips.addWidget(chip)
+        self._tag_caption.setVisible(True)
         self._speaker_combo.addItem(name)
         self._schedule_meta_push()
 
@@ -698,6 +710,8 @@ class NotesWindow(QWidget):
     # ---- final-transcript editing -----------------------------------------
 
     def _clear_chips(self):
+        if hasattr(self, "_tag_caption"):
+            self._tag_caption.setVisible(False)
         for row in (self._chips_row, self._tag_chips):
             while row.count():
                 item = row.takeAt(0)
@@ -1713,11 +1727,19 @@ class AloeScribeWindow(QMainWindow):
         self._signals.notes_final.emit((path, text))
 
     def _on_notes_final(self, payload):
-        # Only refresh a notes window the user actually has open — never
-        # conjure one at transcript-completion time.
-        if self._notes_window is not None and self._notes_window.isVisible():
-            path, text = payload
-            self._notes_window.show_final(path, text)
+        # The finished transcript POPS the notes window — the moment it
+        # becomes editable is exactly when the user should see the editor
+        # and its Save button, not hunt for a hidden window.
+        path, text = payload
+        if self._notes_window is None:
+            self._notes_window = NotesWindow(
+                on_meta_changed=self._on_meta_changed,
+                on_save=self._on_save_transcript,
+            )
+        self._notes_window.show_final(path, text)
+        self._notes_window.show()
+        self._notes_window.raise_()
+        self._notes_window.activateWindow()
 
     def _show_notes(self, start_meeting: bool = False):
         if self._notes_window is None:
