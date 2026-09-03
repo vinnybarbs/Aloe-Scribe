@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aloe Scribe vs Otter. Local notetaker or cloud bot.</title>
+<meta name="description" content="Otter transcribes your meetings on its servers with a bot in the call. Aloe Scribe does the same job on your own computer. An honest comparison for buyers.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="canonical" href="https://aloescribe.ai/vs-otter.html">
+<meta property="og:title" content="Aloe Scribe vs Otter">
+<meta property="og:description" content="Otter transcribes your meetings on its servers with a bot in the call. Aloe Scribe does the same job on your own computer. An honest comparison.">
+<meta property="og:image" content="https://aloescribe.ai/assets/og-image.png">
+<meta property="og:url" content="https://aloescribe.ai/vs-otter.html">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --green: #2F8F5B;
+    --green-2: #3A8C5A;
+    --green-dark: #256F47;
+    --ink: #2B342E;
+    --body: #4A554D;
+    --caption: #8B948C;
+    --line: #E2E9E4;
+    --paper: #F6FAF7;
+    --white: #FFFFFF;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--body);
+    background: var(--white);
+    line-height: 1.65;
+    font-size: 1.0625rem;
+  }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 0 1.25rem; }
+  a { color: var(--green); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    background: var(--white);
+  }
+  .nav {
+    max-width: 60rem; margin: 0 auto; padding: 0.85rem 1.25rem;
+    display: flex; align-items: center; gap: 1.5rem;
+  }
+  .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 650; color: var(--ink); font-size: 1.05rem; }
+  .brand img { width: 26px; height: 26px; }
+  .brand-green { color: var(--green); font-weight: 650; }
+  .nav-links { display: flex; gap: 1.25rem; margin-left: auto; font-size: 0.95rem; }
+  .nav-links a { color: var(--body); }
+  .nav .btn { margin-left: 0.25rem; }
+
+  .btn {
+    display: inline-block; background: var(--green); color: var(--white);
+    padding: 0.7rem 1.35rem; border-radius: 10px; font-weight: 600;
+    font-size: 1rem; border: none; cursor: pointer;
+  }
+  .btn:hover { background: var(--green-dark); text-decoration: none; }
+  .btn.small { padding: 0.45rem 0.95rem; font-size: 0.9rem; }
+  .btn.ghost {
+    background: var(--white); color: var(--green); border: 1.5px solid var(--green);
+  }
+  .btn.ghost:hover { background: var(--paper); }
+
+  .kicker {
+    color: var(--caption); font-size: 0.8rem; font-weight: 650;
+    letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 0.75rem;
+  }
+  h1 {
+    color: var(--ink); font-size: 2.7rem; line-height: 1.12;
+    letter-spacing: -0.02em; font-weight: 750; margin-bottom: 1.1rem;
+  }
+  h2 {
+    color: var(--ink); font-size: 1.7rem; line-height: 1.25;
+    letter-spacing: -0.01em; font-weight: 700; margin-bottom: 0.9rem;
+  }
+  h3 { color: var(--ink); font-size: 1.1rem; font-weight: 650; margin-bottom: 0.4rem; }
+  section { padding: 4.25rem 0; }
+  section + section { border-top: 1px solid var(--line); }
+  p + p { margin-top: 1rem; }
+  .lede { font-size: 1.2rem; }
+  .caption { color: var(--caption); font-size: 0.9rem; }
+
+  .hero { padding: 5rem 0 4.5rem; }
+  .hero .actions { display: flex; gap: 0.8rem; flex-wrap: wrap; margin: 1.75rem 0 0.9rem; }
+
+  table.flow {
+    width: 100%; border-collapse: collapse; margin-top: 1.5rem;
+    font-size: 0.98rem;
+  }
+  table.flow th, table.flow td {
+    text-align: left; padding: 0.8rem 1rem; border: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.flow th {
+    background: var(--paper); color: var(--ink); font-weight: 650;
+    white-space: nowrap; width: 9.5rem;
+  }
+  .table-scroll { overflow-x: auto; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; margin-top: 1.5rem; }
+  .card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+    padding: 1.35rem 1.4rem; font-size: 0.96rem;
+  }
+  .card ul { margin: 0.6rem 0 0 1.1rem; }
+  .card li { margin-bottom: 0.35rem; }
+
+  footer.site {
+    border-top: 1px solid var(--line); padding: 2.5rem 0 3rem;
+    font-size: 0.9rem; color: var(--caption);
+  }
+  footer.site .wrap { display: flex; flex-direction: column; gap: 0.6rem; }
+  footer.site .brand { font-size: 0.95rem; }
+  footer.site img { width: 20px; height: 20px; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 2.1rem; }
+    h2 { font-size: 1.45rem; }
+    .nav-links { display: none; }
+    .cols { grid-template-columns: 1fr; }
+    section { padding: 3.25rem 0; }
+    .hero { padding: 3.5rem 0 3.25rem; }
+  }
+</style>
+<style>
+  table.vs { font-size: 0.93rem; }
+  table.vs th { white-space: normal; }
+  table.vs thead th { width: auto; }
+  ul.plain { padding-left: 1.2rem; margin-top: 0.8rem; }
+  ul.plain li { margin: 0.45rem 0; }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <nav class="nav">
+    <a class="brand" href="index.html"><img src="assets/icon.png" alt="">Aloe&nbsp;<span class="brand-green">Scribe</span></a>
+    <div class="nav-links">
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#data">Your data</a>
+      <a href="index.html#faq">FAQ</a>
+      <a href="security.html">Security</a>
+    </div>
+    <a class="btn small" href="index.html#download">Download</a>
+  </nav>
+</header>
+
+<main>
+<section class="hero" style="padding-bottom: 2.5rem;">
+  <div class="wrap">
+    <p class="kicker">Comparison</p>
+    <h1>Aloe Scribe vs Otter</h1>
+    <p class="lede">Otter is a cloud service. A bot joins your meeting, your audio goes to Otter's servers, and you pay per seat every month. Aloe Scribe does the same job on your own computer, with no bot, no upload, and no account. If you want a shared team workspace and mobile apps, Otter is the established choice. If you want the notes without sending your meetings to a vendor, that is what Aloe Scribe is for.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>The real difference is where your audio goes</h2>
+    <p>Otter works by receiving your meeting audio. Its OtterPilot bot joins the call as a participant, or the app records and uploads, and transcription happens on Otter's servers. That design is what makes the shared workspace possible, and it is also the source of Otter's current trouble. A federal court in the Northern District of California has <a href="https://natlawreview.com/article/when-ai-takes-notes-court-allows-privacy-claims-against-otterai-proceed">allowed privacy claims against Otter to proceed</a> under federal wiretap law, California privacy law, and the Illinois biometric law, in part because Otter's servers receive meeting audio and Otter uses recordings to train its AI. Otter's own <a href="https://otter.ai/privacy-security">privacy page</a> confirms it trains its models on de-identified customer recordings, with an opt-out in settings. Separately, some universities <a href="https://tldv.io/blog/ai-meeting-recorder-lawsuits/">blocklist notetaker bots</a>, and Teams can flag or deny them.</p>
+    <p>None of that means Otter's product is bad. It means the product has a server in the middle of your meetings. Aloe Scribe removes the server. Recording, transcription, speaker identification, and the summary all run on your computer, so there is no bot for a platform to block and no vendor copy of your audio to litigate over.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>At a glance</h2>
+    <div class="table-scroll">
+    <table class="flow vs">
+      <thead>
+        <tr><th></th><th>Aloe Scribe</th><th>Otter</th></tr>
+      </thead>
+      <tr>
+        <th>Where your audio goes</th>
+        <td>Stays on your computer. Processing runs locally.</td>
+        <td>Uploaded to Otter's servers for transcription.</td>
+      </tr>
+      <tr>
+        <th>Bot in the meeting</th>
+        <td>No bot. Captures the audio your computer already plays and hears.</td>
+        <td>OtterPilot joins the call as a visible participant.</td>
+      </tr>
+      <tr>
+        <th>Speaker identification</th>
+        <td>Acoustic, on device. Tag a voice once during the call and it is named for the rest of the meeting and recognized in future ones. Separate mic and system channels make local versus remote a fact, not a guess.</td>
+        <td>Speaker labels with tagging, processed on Otter's servers.</td>
+      </tr>
+      <tr>
+        <th>Summaries</th>
+        <td>Written on device. Summary, Decisions, Action items, Open questions.</td>
+        <td>Cloud AI summaries and action items.</td>
+      </tr>
+      <tr>
+        <th>Training on your content</th>
+        <td>Never. Nothing leaves the machine.</td>
+        <td>On by default on de-identified recordings, per <a href="https://otter.ai/privacy-security">Otter's privacy page</a>. Opt-out available.</td>
+      </tr>
+      <tr>
+        <th>Output and ownership</th>
+        <td>Plain Markdown files in a folder you choose. Obsidian wikilink mode. Works even if we disappear.</td>
+        <td>Transcripts live in Otter's workspace. Export is available.</td>
+      </tr>
+      <tr>
+        <th>Price</th>
+        <td>Free while in beta. No account.</td>
+        <td>Free tier with 300 minutes a month. Pro from $8.33 per user per month billed annually, Business from $19.99, per <a href="https://otter.ai/pricing">Otter's pricing page</a>.</td>
+      </tr>
+      <tr>
+        <th>Platforms</th>
+        <td>Mac (Apple Silicon, macOS 13+). Windows in beta.</td>
+        <td>Web, iOS, and Android.</td>
+      </tr>
+      <tr>
+        <th>Works offline</th>
+        <td>Yes, after the one-time model download.</td>
+        <td>No. It is a cloud service.</td>
+      </tr>
+    </table>
+    </div>
+    <p class="caption" style="margin-top:0.9rem">Otter details verified September 2026 from Otter's public pages. Tell us if something is out of date.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Choose Otter if</h2>
+    <ul class="plain">
+      <li>You need a bot to attend meetings you cannot join. Aloe Scribe only records meetings happening on your computer, so it cannot cover a call you skipped. Otter can.</li>
+      <li>Your team wants one shared workspace with search across everyone's meetings, channels, and admin controls.</li>
+      <li>You live on your phone. Otter has real iOS and Android apps. Aloe Scribe is a desktop app.</li>
+      <li>Your organization has already reviewed and accepted cloud transcription, and per-seat pricing is fine.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Choose Aloe Scribe if</h2>
+    <ul class="plain">
+      <li>Your meetings are confidential. Client calls, legal, HR, security, or anything under NDA. No upload means there is nothing for a vendor to hold, train on, or produce in discovery.</li>
+      <li>You do not want a bot in the participant list, or your counterparties' platforms block bots.</li>
+      <li>You want your notes as files you own. Plain Markdown on your disk feeds Obsidian, Glean, Copilot, or whatever comes next.</li>
+      <li>You want speaker names that come from the audio itself, with colleagues recognized meeting after meeting.</li>
+      <li>You would rather not pay per seat, per month, forever. Aloe Scribe is free while in beta.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Try it on your next meeting</h2>
+    <p>Download takes a few minutes, and the first transcript lands seconds after you hit stop. There is no account to create and nothing to cancel if it is not for you.</p>
+    <div class="hero" style="padding: 1.25rem 0 0;">
+      <div class="actions" style="display:flex; gap:0.8rem; flex-wrap:wrap;">
+        <a class="btn" href="index.html#download">Download Aloe Scribe</a>
+        <a class="btn ghost" href="security.html">Read the security page</a>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p class="brand"><img src="assets/icon.png" alt="">Aloe&nbsp;<span class="brand-green">Scribe</span></p>
+    <p>The private meeting notepad. Your audio never leaves the machine.</p>
+    <p><a href="index.html">Home</a> · <a href="security.html">Security and privacy</a> · <a href="vs-macwhisper.html">Aloe Scribe vs MacWhisper</a> · <a href="https://github.com/vinnybarbs/Aloe-Scribe">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
