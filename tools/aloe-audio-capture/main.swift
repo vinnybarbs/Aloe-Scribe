@@ -699,7 +699,8 @@ final class MicCapture: @unchecked Sendable {
         engine.prepare()
         try engine.start()
         self.engine = engine
-        eprint("Mic: echo-cancelled capture via Apple voice processing")
+        eprint("Mic: echo-cancelled capture via Apple voice processing "
+               + "(tap \(Int(inFmt.sampleRate)) Hz, \(inFmt.channelCount) ch)")
     }
 
     private func stopVPIO() {
@@ -766,14 +767,36 @@ final class MicCapture: @unchecked Sendable {
                 try startVPIO()
                 // If voice processing yields no audio (quirky device, odd
                 // aggregate), fall back to raw ffmpeg capture automatically.
-                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 4.0) { [weak self] in
-                    guard let self = self, !self.stopFlag else { return }
-                    if self.buffersReceived == 0 || self.vpioPeak == 0 {
-                        eprint("VPIO delivered \(self.buffersReceived == 0 ? "no" : "silent") audio in 4s — falling back to raw capture")
-                        self.stopVPIO()
-                        try? self.startFFmpeg()
+                // Silence is NOT proof of failure here: perfect echo
+                // cancellation plus noise suppression legitimately outputs
+                // all-zero audio while the user listens without talking.
+                // Judge over a long window with periodic logging, and only
+                // abandon VPIO when no buffers arrive at all (a real stall)
+                // or half a minute passes with literal digital silence.
+                func check(_ elapsed: Int) {
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                        guard let self = self, !self.stopFlag else { return }
+                        if self.buffersReceived == 0 {
+                            eprint("VPIO: no buffers after \(elapsed + 5)s — falling back to raw capture")
+                            self.stopVPIO()
+                            try? self.startFFmpeg()
+                            return
+                        }
+                        if self.vpioPeak > 0 {
+                            eprint("VPIO healthy: first nonzero audio within \(elapsed + 5)s (peak \(self.vpioPeak))")
+                            return
+                        }
+                        if elapsed + 5 >= 30 {
+                            eprint("VPIO: 30s of digital silence — falling back to raw capture")
+                            self.stopVPIO()
+                            try? self.startFFmpeg()
+                            return
+                        }
+                        eprint("VPIO: silent so far at \(elapsed + 5)s (buffers \(self.buffersReceived)) — could be perfect AEC while the user listens, waiting")
+                        check(elapsed + 5)
                     }
                 }
+                check(0)
                 return
             } catch {
                 eprint("VPIO unavailable (\(error.localizedDescription)) — raw capture")
