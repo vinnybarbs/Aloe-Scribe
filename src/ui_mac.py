@@ -906,13 +906,15 @@ class AloeScribeWindow(QMainWindow):
     def _build_header(self):
         header = QHBoxLayout()
 
-        title = QLabel("Aloe")
+        # One label so the layout cannot widen the wordmark: the gap
+        # between the words is exactly one space.
+        title = QLabel(
+            'Aloe&nbsp;<span style="color:#2F8F5B;font-weight:400">Scribe</span>'
+        )
         title.setObjectName("appTitle")
-        sub = QLabel("Scribe")
-        sub.setObjectName("appSub")
+        title.setTextFormat(Qt.TextFormat.RichText)
 
         header.addWidget(title)
-        header.addWidget(sub)
         header.addStretch()
 
         self._status_label = QLabel("● Idle")
