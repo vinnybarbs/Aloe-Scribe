@@ -1054,11 +1054,26 @@ class AloeScribeWindow(QMainWindow):
         if self._mic_meter is not None or self._sys_meter is not None:
             self._start_meters()
 
+    @staticmethod
+    def _meter_scale(level: float) -> int:
+        """Peak level (0..1) to bar units on a decibel scale. Linear peak
+        bars peg at the top for anything loud — digital system audio runs
+        near full scale by design, and an un-gained mic near speakers
+        peaks high — so map -50 dB..0 dB onto the bar the way real audio
+        meters do. Speech sits mid-bar, full scale reaches the top, and
+        differences in loudness are visible again."""
+        import math
+
+        if level <= 0.003:
+            return 0
+        db = 20.0 * math.log10(min(1.0, level))
+        return int(max(0.0, min(1.0, (db + 50.0) / 50.0)) * 1000)
+
     def _update_mic_level(self, level: float):
         bar = self._mic_level_bar
         if bar is not None:
             try:
-                bar.setValue(int(min(1.0, max(0.0, level)) * 1000))
+                bar.setValue(self._meter_scale(level))
             except Exception:
                 pass
 
@@ -1066,7 +1081,7 @@ class AloeScribeWindow(QMainWindow):
         bar = self._sys_level_bar
         if bar is not None:
             try:
-                bar.setValue(int(min(1.0, max(0.0, level)) * 1000))
+                bar.setValue(self._meter_scale(level))
             except Exception:
                 pass
 
