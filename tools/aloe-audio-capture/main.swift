@@ -828,7 +828,13 @@ final class MicCapture: @unchecked Sendable {
         eprint("MicCapture.start() entered")
         // Prefer Apple voice processing (echo cancellation) when the chosen
         // mic is the system default input. ALOE_NO_AEC=1 forces raw capture.
-        if ProcessInfo.processInfo.environment["ALOE_NO_AEC"] == nil,
+        // Voice processing is OPT-IN (ALOE_AEC=1). Engaging it while a
+        // conferencing app is live on the same mic put two voice-processing
+        // chains on one device: ours delivered pure zeros and the user's
+        // call audio was disturbed. Until we can detect an active call,
+        // passive native capture is the default.
+        if ProcessInfo.processInfo.environment["ALOE_AEC"] == "1",
+           ProcessInfo.processInfo.environment["ALOE_NO_AEC"] == nil,
            MicCapture.defaultInputIsBuiltIn(),
            let defName = MicCapture.defaultInputDeviceName(),
            defName.lowercased() == deviceName.lowercased() {
@@ -870,10 +876,8 @@ final class MicCapture: @unchecked Sendable {
             } catch {
                 eprint("VPIO unavailable (\(error.localizedDescription)) — raw capture")
             }
-        } else if ProcessInfo.processInfo.environment["ALOE_NO_AEC"] != nil {
-            eprint("ALOE_NO_AEC set — native raw capture")
         } else {
-            eprint("Mic '\(deviceName)' is not the default input — native raw capture (no AEC)")
+            eprint("Mic: native capture (voice processing is opt-in via ALOE_AEC=1)")
         }
         do {
             try startRawEngine()
