@@ -912,7 +912,6 @@ class AloeScribeWindow(QMainWindow):
         sub.setObjectName("appSub")
 
         header.addWidget(title)
-        header.addSpacing(5)
         header.addWidget(sub)
         header.addStretch()
 
