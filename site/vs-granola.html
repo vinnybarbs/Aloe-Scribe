@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aloe Scribe vs Granola. Two notepads, one difference.</title>
+<meta name="description" content="Granola and Aloe Scribe are both notepad-first meeting notetakers with no bot. Granola processes your audio in the cloud. Aloe Scribe processes it on your computer. An honest comparison for buyers.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="canonical" href="https://aloescribe.ai/vs-granola.html">
+<meta property="og:title" content="Aloe Scribe vs Granola">
+<meta property="og:description" content="Both are notepad-first notetakers with no bot. Granola processes your audio in the cloud. Aloe Scribe processes it on your computer. An honest comparison.">
+<meta property="og:image" content="https://aloescribe.ai/assets/og-image.png">
+<meta property="og:url" content="https://aloescribe.ai/vs-granola.html">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --green: #2F8F5B;
+    --green-2: #3A8C5A;
+    --green-dark: #256F47;
+    --ink: #2B342E;
+    --body: #4A554D;
+    --caption: #8B948C;
+    --line: #E2E9E4;
+    --paper: #F6FAF7;
+    --white: #FFFFFF;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--body);
+    background: var(--white);
+    line-height: 1.65;
+    font-size: 1.0625rem;
+  }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 0 1.25rem; }
+  a { color: var(--green); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    background: var(--white);
+  }
+  .nav {
+    max-width: 60rem; margin: 0 auto; padding: 0.85rem 1.25rem;
+    display: flex; align-items: center; gap: 1.5rem;
+  }
+  .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 650; color: var(--ink); font-size: 1.05rem; }
+  .brand img { width: 26px; height: 26px; }
+  .brand-green { color: var(--green); font-weight: 650; }
+  .nav-links { display: flex; gap: 1.25rem; margin-left: auto; font-size: 0.95rem; }
+  .nav-links a { color: var(--body); }
+  .nav .btn { margin-left: 0.25rem; }
+
+  .btn {
+    display: inline-block; background: var(--green); color: var(--white);
+    padding: 0.7rem 1.35rem; border-radius: 10px; font-weight: 600;
+    font-size: 1rem; border: none; cursor: pointer;
+  }
+  .btn:hover { background: var(--green-dark); text-decoration: none; }
+  .btn.small { padding: 0.45rem 0.95rem; font-size: 0.9rem; }
+  .btn.ghost {
+    background: var(--white); color: var(--green); border: 1.5px solid var(--green);
+  }
+  .btn.ghost:hover { background: var(--paper); }
+
+  .kicker {
+    color: var(--caption); font-size: 0.8rem; font-weight: 650;
+    letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 0.75rem;
+  }
+  h1 {
+    color: var(--ink); font-size: 2.7rem; line-height: 1.12;
+    letter-spacing: -0.02em; font-weight: 750; margin-bottom: 1.1rem;
+  }
+  h2 {
+    color: var(--ink); font-size: 1.7rem; line-height: 1.25;
+    letter-spacing: -0.01em; font-weight: 700; margin-bottom: 0.9rem;
+  }
+  h3 { color: var(--ink); font-size: 1.1rem; font-weight: 650; margin-bottom: 0.4rem; }
+  section { padding: 4.25rem 0; }
+  section + section { border-top: 1px solid var(--line); }
+  p + p { margin-top: 1rem; }
+  .lede { font-size: 1.2rem; }
+  .caption { color: var(--caption); font-size: 0.9rem; }
+
+  .hero { padding: 5rem 0 4.5rem; }
+  .hero .actions { display: flex; gap: 0.8rem; flex-wrap: wrap; margin: 1.75rem 0 0.9rem; }
+
+  table.flow {
+    width: 100%; border-collapse: collapse; margin-top: 1.5rem;
+    font-size: 0.98rem;
+  }
+  table.flow th, table.flow td {
+    text-align: left; padding: 0.8rem 1rem; border: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.flow th {
+    background: var(--paper); color: var(--ink); font-weight: 650;
+    white-space: nowrap; width: 9.5rem;
+  }
+  .table-scroll { overflow-x: auto; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; margin-top: 1.5rem; }
+  .card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+    padding: 1.35rem 1.4rem; font-size: 0.96rem;
+  }
+  .card ul { margin: 0.6rem 0 0 1.1rem; }
+  .card li { margin-bottom: 0.35rem; }
+
+  footer.site {
+    border-top: 1px solid var(--line); padding: 2.5rem 0 3rem;
+    font-size: 0.9rem; color: var(--caption);
+  }
+  footer.site .wrap { display: flex; flex-direction: column; gap: 0.6rem; }
+  footer.site .brand { font-size: 0.95rem; }
+  footer.site img { width: 20px; height: 20px; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 2.1rem; }
+    h2 { font-size: 1.45rem; }
+    .nav-links { display: none; }
+    .cols { grid-template-columns: 1fr; }
+    section { padding: 3.25rem 0; }
+    .hero { padding: 3.5rem 0 3.25rem; }
+  }
+</style>
+<style>
+  table.vs { font-size: 0.93rem; }
+  table.vs th { white-space: normal; }
+  table.vs thead th { width: auto; }
+  ul.plain { padding-left: 1.2rem; margin-top: 0.8rem; }
+  ul.plain li { margin: 0.45rem 0; }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <nav class="nav">
+    <a class="brand" href="index.html"><img src="assets/icon.png" alt=""><span>Aloe&nbsp;<span class="brand-green">Scribe</span></span></a>
+    <div class="nav-links">
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#data">Your data</a>
+      <a href="index.html#faq">FAQ</a>
+      <a href="security.html">Security</a>
+    </div>
+    <a class="btn small" href="index.html#download">Download</a>
+  </nav>
+</header>
+
+<main>
+<section class="hero" style="padding-bottom: 2.5rem;">
+  <div class="wrap">
+    <p class="kicker">Comparison</p>
+    <h1>Aloe Scribe vs Granola</h1>
+    <p class="lede">Granola is the closest product to Aloe Scribe in spirit. Both are notepads first, both capture the audio your computer already plays and hears, and neither puts a bot in your call. The difference is where the work happens. Granola captures audio on your machine and streams it to cloud services for transcription and AI notes. Aloe Scribe does the whole job on your computer. If you want polished cloud AI, team sharing, and mobile apps, Granola is the well-funded leader. If your meetings cannot leave the machine, that is what Aloe Scribe is for.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>The real difference is where the processing happens</h2>
+    <p>Granola got the form factor right, and we say that as fans. A quiet notepad that enhances your own typed notes is the best interaction design in this category, and Aloe Scribe's notepad comes from the same school. Where the two products part ways is architecture. Granola records locally but processes in the cloud. Its <a href="https://www.granola.ai/security">security page</a> says meeting audio goes to transcription providers such as Deepgram and Assembly, notes are written by AI providers such as OpenAI and Anthropic, and the resulting transcripts are stored on Granola's servers. Granola does not keep the audio itself, but your meeting content leaves your machine by design, because that is how the product works.</p>
+    <p>That design now has legal weight on it. A putative class action, <em>Chamberlain v. Granola</em>, was filed in the Northern District of California in July 2026, alleging that Granola records participants without their consent and uses transcripts to train its models by default, with the opt-out belonging to the account holder rather than the people recorded. See <a href="https://natlawreview.com/article/ai-note-taking-tools-silent-recording-and-consent-problem">the National Law Review's analysis</a> and <a href="https://basilai.app/articles/2026-08-05-chamberlain-v-granola-invisible-ai-notetaker-wiretap-lawsuit.html">this case summary</a>. These are allegations, not findings, and the case may go nowhere. But the exposure only exists because a vendor holds copies of the meetings.</p>
+    <p>Aloe Scribe removes the vendor. Recording, transcription, speaker identification, and the summary all run on your computer. There is no transcription service to subpoena, no training default to audit, and no server to breach. The only network calls the app makes are model downloads and update checks.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>At a glance</h2>
+    <div class="table-scroll">
+    <table class="flow vs">
+      <thead>
+        <tr><th></th><th>Aloe Scribe</th><th>Granola</th></tr>
+      </thead>
+      <tr>
+        <th>Where your audio goes</th>
+        <td>Stays on your computer. Processing runs locally.</td>
+        <td>Captured locally, then streamed to cloud transcription providers such as Deepgram and Assembly, per <a href="https://www.granola.ai/security">Granola's security page</a>.</td>
+      </tr>
+      <tr>
+        <th>Bot in the meeting</th>
+        <td>No bot. Captures the audio your computer already plays and hears.</td>
+        <td>No bot. Same capture approach.</td>
+      </tr>
+      <tr>
+        <th>What leaves the machine</th>
+        <td>Nothing. The only network calls are model downloads and update checks.</td>
+        <td>Audio streams out for transcription, transcripts go to OpenAI or Anthropic for notes, and transcripts are stored on Granola's servers. Audio itself is not retained.</td>
+      </tr>
+      <tr>
+        <th>Speaker identification</th>
+        <td>Acoustic, on device. Tag a voice once during the call and it is named for the rest of the meeting and recognized in future ones. Separate mic and system channels make local versus remote a fact, not a guess.</td>
+        <td>Named tags depend on meeting platform integration, currently Google Meet and Zoom on Mac, per <a href="https://docs.granola.ai/help-center/taking-notes/transcription">Granola's docs</a>. Elsewhere transcripts read Me and Them from the mic and system split.</td>
+      </tr>
+      <tr>
+        <th>Summaries</th>
+        <td>Written on device. Summary, Decisions, Action items, Open questions.</td>
+        <td>Cloud AI notes built around what you typed. Widely praised quality.</td>
+      </tr>
+      <tr>
+        <th>Output and ownership</th>
+        <td>Plain Markdown files in a folder you choose. Obsidian wikilink mode. Works even if we disappear.</td>
+        <td>Notes live in Granola's cloud. The local cache was <a href="https://github.com/openclaw/graincrawl/issues/15">encrypted in a recent release</a>, and community tools that exported it to Markdown stopped working. Granola offers its own MCP and API instead.</td>
+      </tr>
+      <tr>
+        <th>Price</th>
+        <td>Free while in beta. No account.</td>
+        <td>Free Basic plan. Business at $14 per user per month, Enterprise at $35, per <a href="https://www.granola.ai/pricing">Granola's pricing page</a>.</td>
+      </tr>
+      <tr>
+        <th>Platforms</th>
+        <td>Mac (Apple Silicon, macOS 13+). Windows in beta.</td>
+        <td>Mac, Windows, iOS, and Android.</td>
+      </tr>
+    </table>
+    </div>
+    <p class="caption" style="margin-top:0.9rem">Granola details verified September 2026 from Granola's public pages. Tell us if something is out of date.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Choose Granola if</h2>
+    <ul class="plain">
+      <li>You want the most polished notepad in the category. Granola defined this product shape, and the cloud models writing its notes are excellent.</li>
+      <li>Your team shares notes. Shared folders, templates, and integrations with Notion, Slack, HubSpot, and Attio are real team features Aloe Scribe does not have.</li>
+      <li>You take meetings on your phone. Granola has iOS and Android apps. Aloe Scribe is a desktop app.</li>
+      <li>You want calendar integration that lines your notes up with your schedule.</li>
+      <li>Your organization has reviewed cloud processing and is comfortable with audio going to Granola's transcription and AI providers.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Choose Aloe Scribe if</h2>
+    <ul class="plain">
+      <li>Your meetings are confidential. Client calls, legal, HR, security, or anything under NDA. When nothing leaves the machine, there is nothing for a vendor to hold, train on, or produce in discovery.</li>
+      <li>You want speaker names that come from the audio itself, in any meeting app, not just the platforms with an integration.</li>
+      <li>You want your notes as plain files you own. Open Markdown on your disk cannot be locked away from your own scripts and tools.</li>
+      <li>You work offline or on networks where streaming meeting audio out is not an option.</li>
+      <li>You would rather not pay per seat. Aloe Scribe is free while in beta, with no account.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Try it on your next meeting</h2>
+    <p>Download takes a few minutes, and the first transcript lands seconds after you hit stop. There is no account to create and nothing to cancel if it is not for you.</p>
+    <div class="hero" style="padding: 1.25rem 0 0;">
+      <div class="actions" style="display:flex; gap:0.8rem; flex-wrap:wrap;">
+        <a class="btn" href="index.html#download">Download Aloe Scribe</a>
+        <a class="btn ghost" href="security.html">Read the security page</a>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p class="brand"><img src="assets/icon.png" alt=""><span>Aloe&nbsp;<span class="brand-green">Scribe</span></span></p>
+    <p>The private meeting notepad. Your audio never leaves the machine.</p>
+    <p><a href="index.html">Home</a> · <a href="security.html">Security and privacy</a> · <a href="vs-otter.html">Aloe Scribe vs Otter</a> · <a href="vs-macwhisper.html">Aloe Scribe vs MacWhisper</a> · <a href="https://github.com/vinnybarbs/Aloe-Scribe">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
