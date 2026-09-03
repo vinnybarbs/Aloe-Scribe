@@ -329,13 +329,22 @@
     <h2>Get Aloe Scribe</h2>
     <p>Free while in beta. Pricing will be announced later.</p>
 
-    <div class="dl-card">
+    <div class="dl-card" id="mac-card">
       <h3>Mac</h3>
-      <p style="margin-top:0.4rem">Paste this into Terminal. It installs the app and its models in one step.</p>
-      <pre class="cmd" id="mac-cmd">bash -c "$(curl -fsSL https://raw.githubusercontent.com/vinnybarbs/Aloe-Scribe/main/scripts/get-mac.sh)"</pre>
-      <div class="copy-row">
-        <button class="btn small" id="copy-btn" onclick="copyCmd()">Copy command</button>
-        <span class="caption">A one-click notarized installer is coming.</span>
+      <div id="mac-terminal-install">
+        <p style="margin-top:0.4rem">Paste this into Terminal. It installs the app and its models in one step.</p>
+        <pre class="cmd" id="mac-cmd">bash -c "$(curl -fsSL https://raw.githubusercontent.com/vinnybarbs/Aloe-Scribe/main/scripts/get-mac.sh)"</pre>
+        <div class="copy-row">
+          <button class="btn small" id="copy-btn" onclick="copyCmd()">Copy command</button>
+          <span class="caption">A one-click notarized installer is coming.</span>
+        </div>
+      </div>
+      <div id="mac-dmg-install" hidden>
+        <p style="margin-top:0.4rem">Signed and notarized. Download, open, drag to Applications.</p>
+        <div class="copy-row" style="margin-top:0.9rem">
+          <a class="btn" id="mac-dmg-btn" href="#">Download for Mac</a>
+          <span class="caption" id="mac-dmg-meta"></span>
+        </div>
       </div>
     </div>
 
@@ -398,6 +407,18 @@
 </footer>
 
 <script>
+// When the release pipeline publishes a notarized DMG it writes
+// version.json, and this card upgrades itself from the terminal
+// one-liner to a plain download button. No release-day HTML edits.
+fetch('version.json').then(function (r) { return r.json(); }).then(function (v) {
+  if (!v.mac || !v.mac.url) return;
+  document.getElementById('mac-dmg-btn').href = v.mac.url;
+  document.getElementById('mac-dmg-meta').textContent =
+    'Version ' + v.mac.version + ' · SHA-256 published on the release';
+  document.getElementById('mac-terminal-install').hidden = true;
+  document.getElementById('mac-dmg-install').hidden = false;
+}).catch(function () {});
+
 function copyCmd() {
   var text = document.getElementById('mac-cmd').textContent;
   var btn = document.getElementById('copy-btn');
