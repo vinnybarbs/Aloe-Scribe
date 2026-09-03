@@ -625,6 +625,53 @@ final class MicCapture: @unchecked Sendable {
         return transport == kAudioDeviceTransportTypeBuiltIn
     }
 
+    /// AudioDeviceID for an input device by exact name (case-insensitive),
+    /// skipping Continuity devices — passive CoreAudio, no discovery chime.
+    static func findInputDeviceID(name: String) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
+        ) == noErr else { return nil }
+        var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids
+        ) == noErr else { return nil }
+        for id in ids {
+            var streamsAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain)
+            var streamsSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(id, &streamsAddr, 0, nil, &streamsSize) == noErr,
+                  streamsSize > 0 else { continue }
+            var transportAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var transport: UInt32 = 0
+            var tSize = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(id, &transportAddr, 0, nil, &tSize, &transport) == noErr,
+               transport == kAudioDeviceTransportTypeContinuityCaptureWired
+                || transport == kAudioDeviceTransportTypeContinuityCaptureWireless {
+                continue
+            }
+            var nameAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioObjectPropertyName,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var cfName: Unmanaged<CFString>?
+            var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(id, &nameAddr, 0, nil, &nameSize, &cfName) == noErr,
+                  let n = cfName?.takeRetainedValue() as String? else { continue }
+            if n.lowercased() == name.lowercased() { return id }
+        }
+        return nil
+    }
+
     static func defaultInputDeviceName() -> String? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
@@ -653,10 +700,29 @@ final class MicCapture: @unchecked Sendable {
     /// cancels audio played by OTHER processes (a Teams call through the
     /// speakers no longer lands on the mic channel).
     private func startVPIO() throws {
+        try startEngine(voiceProcessing: true)
+    }
+
+    /// Native AVAudioEngine capture WITHOUT voice processing — the primary
+    /// mic path. ffmpeg's avfoundation input was measured time-compressing
+    /// the mic stream by ~11% (12.3 s between events that were really
+    /// 13.8 s apart), which corrupted every mic-channel timestamp.
+    private func startRawEngine() throws {
+        try startEngine(voiceProcessing: false)
+    }
+
+    private func startEngine(voiceProcessing: Bool) throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        if #available(macOS 14.0, *) {
+        if voiceProcessing {
+            try input.setVoiceProcessingEnabled(true)
+        } else if let devID = MicCapture.findInputDeviceID(name: deviceName) {
+            // Bind the requested (non-default) device. Failure falls back
+            // to the default input rather than aborting the recording.
+            do { try input.auAudioUnit.setDeviceID(devID) }
+            catch { eprint("Mic device bind failed (\(error)) — using default input") }
+        }
+        if #available(macOS 14.0, *), voiceProcessing {
             // Never duck other apps' audio: the meeting itself plays there.
             input.voiceProcessingOtherAudioDuckingConfiguration =
                 AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
@@ -699,8 +765,11 @@ final class MicCapture: @unchecked Sendable {
         engine.prepare()
         try engine.start()
         self.engine = engine
-        eprint("Mic: echo-cancelled capture via Apple voice processing "
-               + "(tap \(Int(inFmt.sampleRate)) Hz, \(inFmt.channelCount) ch)")
+        eprint(voiceProcessing
+               ? "Mic: echo-cancelled capture via Apple voice processing "
+                 + "(tap \(Int(inFmt.sampleRate)) Hz, \(inFmt.channelCount) ch)"
+               : "Mic: native capture (tap \(Int(inFmt.sampleRate)) Hz, "
+                 + "\(inFmt.channelCount) ch)")
     }
 
     private func stopVPIO() {
@@ -779,7 +848,7 @@ final class MicCapture: @unchecked Sendable {
                         if self.buffersReceived == 0 {
                             eprint("VPIO: no buffers after \(elapsed + 5)s — falling back to raw capture")
                             self.stopVPIO()
-                            try? self.startFFmpeg()
+                            try? self.startRawEngine()
                             return
                         }
                         if self.vpioPeak > 0 {
@@ -789,7 +858,7 @@ final class MicCapture: @unchecked Sendable {
                         if elapsed + 5 >= 30 {
                             eprint("VPIO: 30s of digital silence — falling back to raw capture")
                             self.stopVPIO()
-                            try? self.startFFmpeg()
+                            try? self.startRawEngine()
                             return
                         }
                         eprint("VPIO: silent so far at \(elapsed + 5)s (buffers \(self.buffersReceived)) — could be perfect AEC while the user listens, waiting")
@@ -802,11 +871,24 @@ final class MicCapture: @unchecked Sendable {
                 eprint("VPIO unavailable (\(error.localizedDescription)) — raw capture")
             }
         } else if ProcessInfo.processInfo.environment["ALOE_NO_AEC"] != nil {
-            eprint("ALOE_NO_AEC set — raw capture")
+            eprint("ALOE_NO_AEC set — native raw capture")
         } else {
-            eprint("Mic '\(deviceName)' is not the default input — raw capture (no AEC)")
+            eprint("Mic '\(deviceName)' is not the default input — native raw capture (no AEC)")
         }
-        try startFFmpeg()
+        do {
+            try startRawEngine()
+            // ffmpeg remains the last resort if the engine yields nothing.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                guard let self = self, !self.stopFlag,
+                      self.buffersReceived == 0 else { return }
+                eprint("Native capture produced no audio in 3s — ffmpeg fallback")
+                self.stopVPIO()
+                try? self.startFFmpeg()
+            }
+        } catch {
+            eprint("Native capture unavailable (\(error.localizedDescription)) — ffmpeg fallback")
+            try startFFmpeg()
+        }
     }
 
     private func startFFmpeg() throws {
