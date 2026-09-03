@@ -965,30 +965,23 @@ class AloeScribeWindow(QMainWindow):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         self._content_layout.addWidget(sep)
 
-        mic_label = QLabel("Mic level")
-        mic_label.setObjectName("deviceLabel")
-        self._content_layout.addWidget(mic_label)
+        level_label = QLabel("Audio level")
+        level_label.setObjectName("deviceLabel")
+        self._content_layout.addWidget(level_label)
 
+        # ONE bar for both sources. The question a meter answers is "is it
+        # hearing anything", and two bars that dance together (the mic
+        # acoustically hears whatever the speakers play) read as a bug.
+        # The bar shows whichever source is louder right now.
         self._mic_level_bar = QProgressBar()
         self._mic_level_bar.setRange(0, 1000)
         self._mic_level_bar.setValue(0)
         self._mic_level_bar.setTextVisible(False)
         self._mic_level_bar.setFixedHeight(8)
         self._content_layout.addWidget(self._mic_level_bar)
-
-        if self._system_on():
-            sys_label = QLabel("System audio level")
-            sys_label.setObjectName("deviceLabel")
-            self._content_layout.addWidget(sys_label)
-
-            self._sys_level_bar = QProgressBar()
-            self._sys_level_bar.setRange(0, 1000)
-            self._sys_level_bar.setValue(0)
-            self._sys_level_bar.setTextVisible(False)
-            self._sys_level_bar.setFixedHeight(8)
-            self._content_layout.addWidget(self._sys_level_bar)
-        else:
-            self._sys_level_bar = None
+        self._sys_level_bar = None
+        self._last_mic_level = 0.0
+        self._last_sys_level = 0.0
 
     def _start_meters(self):
         """Spawn meter readers for mic (avfoundation/ffmpeg) and system
@@ -1028,7 +1021,7 @@ class AloeScribeWindow(QMainWindow):
         # background media (YouTube, etc.) before hitting record.
         self._sys_meter = None
         if (self._state != "recording" and self._system_on()
-                and self._sys_level_bar is not None):
+                and self._mic_level_bar is not None):
             try:
                 self._sys_meter = make_sck_meter(
                     str(_helper_path()),
@@ -1072,21 +1065,23 @@ class AloeScribeWindow(QMainWindow):
         db = 20.0 * math.log10(min(1.0, level))
         return int(max(0.0, min(1.0, (db + 40.0) / 40.0)) * 1000)
 
-    def _update_mic_level(self, level: float):
+    def _update_combined_level(self):
         bar = self._mic_level_bar
         if bar is not None:
             try:
-                bar.setValue(self._meter_scale(level))
+                bar.setValue(self._meter_scale(
+                    max(self._last_mic_level, self._last_sys_level)
+                ))
             except Exception:
                 pass
 
+    def _update_mic_level(self, level: float):
+        self._last_mic_level = float(level)
+        self._update_combined_level()
+
     def _update_sys_level(self, level: float):
-        bar = self._sys_level_bar
-        if bar is not None:
-            try:
-                bar.setValue(self._meter_scale(level))
-            except Exception:
-                pass
+        self._last_sys_level = float(level)
+        self._update_combined_level()
 
     def hideEvent(self, event):
         # Save CPU when the window is hidden to the menu bar
@@ -1140,7 +1135,7 @@ class AloeScribeWindow(QMainWindow):
         # "Transcribe a file…" button: opens a picker so any audio file can
         # be transcribed (recovery of failed recordings, or external files).
         has_transcribe = self._build_transcribe_file_row()
-        base = 586 if self._system_on() else 536  # includes the law fine-print line  # +50 for the system-audio meter
+        base = 536  # single audio-level bar for both sources
         if self._summarizer_available:
             base += 30  # the local-summary checkbox row
         self.setFixedSize(344, base + (56 if has_transcribe else 0))
