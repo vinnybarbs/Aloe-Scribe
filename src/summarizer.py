@@ -41,7 +41,7 @@ Produce exactly four sections and nothing else:
 ## Summary
 4 to 7 short bullets, every bullet starting with "- ". Never paragraph form. Cover what the meeting was about, where each major thread stands, and what was learned.
 ## Decisions
-A decision is a choice the participants made in THIS meeting about what they will do. Background facts, org news, and things learned are not decisions and belong in the Summary. When something was considered and REJECTED, state the rejection: "Not to open the folder to all staff." Recording a rejected option as if it was adopted is the worst possible error. State each decision directly, never beginning with "It was decided that", "It is settled that", or "The team". If nothing was decided, write exactly: None captured.
+A decision is a choice the participants made in THIS meeting about what they will do. Background facts, org news, and things learned are not decisions and belong in the Summary. When the group explicitly rejected something, state the rejection plainly, beginning the line with "Not to". Recording a rejected option as if it was adopted is the worst possible error, and so is stating one person's doubt as a group rejection. State each decision directly, never beginning with "It was decided that", "It is settled that", or "The team". If nothing was decided, write exactly: None captured.
 ## Action items
 Only lines tagged [commitment] in the extracted list qualify, never [topic] lines: topics discussed and ideas explored are not action items. At most 8 items, the most consequential. Prefer items where someone agreed to set up, share, schedule, or reach out. Each item must be SPECIFIC: name who a call or introduction is with and what it is about, even when the responsible owner is unclear. Never merge separate workstreams into one item, never write "the speaker", describe the step itself. Include a deadline only when one was stated in the meeting. {owner_rule} If there are no commitments, write exactly: None captured.
 ## Open questions
@@ -156,7 +156,12 @@ if m:
             "'Not to migrate this quarter' where the evidence shows they "
             "decided against migrating: adopted (the statement already says "
             "what they chose).\n"
-            "'Switch to the new tool' where nobody concluded anything: open."
+            "'Switch to the new tool' where nobody concluded anything: open.\n"
+            "'Stop monthly meetings' where one person said monthly is not "
+            "doable but the group settled nothing: open (a doubt or leaning "
+            "is never adopted).\n\n"
+            "Answer adopted ONLY when the evidence shows the group "
+            "explicitly settled it."
             "\n\nStatement: " + s
             + "\n\nEvidence:\n" + evidence
             + "\n\nAnswer with exactly one word: adopted, rejected, or open.",
@@ -213,7 +218,7 @@ sys.stdout.write(final)
 
 _EXTRACT_PROMPT = """From the meeting document below, extract facts one line each, naming the SPECIFIC people involved and the specific subject, quoting or closely paraphrasing the transcript. When transcript lines carry speaker labels (names or codes like R2, M1), attribute each fact to the label on the line that states it, copied exactly: "R6 offers to send Carl the mandate document". Never reattribute a statement to a different speaker. Prefix every line with exactly one tag:
 [commitment] an agreed next step, planned call, or introduction someone will actually do
-[decision] something now settled, INCLUDING options considered and rejected — a rejection must be extracted as "decided NOT to ..." and never as if the option was adopted
+[decision] something the group EXPLICITLY settled, including explicit rejections ("we decided not to X" becomes "decided NOT to X", never stated as if adopted). One person doubting, leaning, or pushing back is NOT a decision — tag those [topic]
 [deadline] a stated date or timeframe
 [question] an unresolved question
 [topic] a subject discussed or an idea explored with no agreement to act
