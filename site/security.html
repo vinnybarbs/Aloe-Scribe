@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security and privacy. Aloe Scribe.</title>
+<meta name="description" content="How Aloe Scribe keeps meeting data on your machine, what the vendor can and cannot see, and the legal grounding for the architecture.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<style>
+  :root {
+    --green: #2F8F5B;
+    --green-2: #3A8C5A;
+    --green-dark: #256F47;
+    --ink: #2B342E;
+    --body: #4A554D;
+    --caption: #8B948C;
+    --line: #E2E9E4;
+    --paper: #F6FAF7;
+    --white: #FFFFFF;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--body);
+    background: var(--white);
+    line-height: 1.65;
+    font-size: 1.0625rem;
+  }
+  .wrap { max-width: 44rem; margin: 0 auto; padding: 0 1.25rem; }
+  a { color: var(--green); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    background: var(--white);
+  }
+  .nav {
+    max-width: 60rem; margin: 0 auto; padding: 0.85rem 1.25rem;
+    display: flex; align-items: center; gap: 1.5rem;
+  }
+  .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 650; color: var(--ink); font-size: 1.05rem; }
+  .brand img { width: 26px; height: 26px; }
+  .nav-links { display: flex; gap: 1.25rem; margin-left: auto; font-size: 0.95rem; }
+  .nav-links a { color: var(--body); }
+  .nav .btn { margin-left: 0.25rem; }
+
+  .btn {
+    display: inline-block; background: var(--green); color: var(--white);
+    padding: 0.7rem 1.35rem; border-radius: 10px; font-weight: 600;
+    font-size: 1rem; border: none; cursor: pointer;
+  }
+  .btn:hover { background: var(--green-dark); text-decoration: none; }
+  .btn.small { padding: 0.45rem 0.95rem; font-size: 0.9rem; }
+  .btn.ghost {
+    background: var(--white); color: var(--green); border: 1.5px solid var(--green);
+  }
+  .btn.ghost:hover { background: var(--paper); }
+
+  .kicker {
+    color: var(--caption); font-size: 0.8rem; font-weight: 650;
+    letter-spacing: 0.09em; text-transform: uppercase; margin-bottom: 0.75rem;
+  }
+  h1 {
+    color: var(--ink); font-size: 2.7rem; line-height: 1.12;
+    letter-spacing: -0.02em; font-weight: 750; margin-bottom: 1.1rem;
+  }
+  h2 {
+    color: var(--ink); font-size: 1.7rem; line-height: 1.25;
+    letter-spacing: -0.01em; font-weight: 700; margin-bottom: 0.9rem;
+  }
+  h3 { color: var(--ink); font-size: 1.1rem; font-weight: 650; margin-bottom: 0.4rem; }
+  section { padding: 4.25rem 0; }
+  section + section { border-top: 1px solid var(--line); }
+  p + p { margin-top: 1rem; }
+  .lede { font-size: 1.2rem; }
+  .caption { color: var(--caption); font-size: 0.9rem; }
+
+  .hero { padding: 5rem 0 4.5rem; }
+  .hero .actions { display: flex; gap: 0.8rem; flex-wrap: wrap; margin: 1.75rem 0 0.9rem; }
+
+  .note-card {
+    margin-top: 2.75rem; background: var(--paper); border: 1px solid var(--line);
+    border-radius: 14px; padding: 1.4rem 1.5rem;
+    font-size: 0.92rem; line-height: 1.7;
+  }
+  .note-card .file { color: var(--caption); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; margin-bottom: 0.8rem; }
+  .note-card .t { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; color: var(--body); }
+  .note-card .t b { color: var(--green-dark); font-weight: 650; }
+  .note-card .sec { color: var(--ink); font-weight: 650; margin: 0.65rem 0 0.15rem; }
+
+  .steps { list-style: none; counter-reset: step; margin-top: 1.75rem; }
+  .steps li {
+    counter-increment: step; position: relative; padding: 0 0 1.6rem 3.1rem;
+  }
+  .steps li::before {
+    content: counter(step); position: absolute; left: 0; top: 0.1rem;
+    width: 2rem; height: 2rem; border-radius: 50%;
+    background: var(--paper); border: 1.5px solid var(--green);
+    color: var(--green-dark); font-weight: 700; font-size: 0.95rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps li:last-child { padding-bottom: 0; }
+
+  table.flow {
+    width: 100%; border-collapse: collapse; margin-top: 1.5rem;
+    font-size: 0.98rem;
+  }
+  table.flow th, table.flow td {
+    text-align: left; padding: 0.8rem 1rem; border: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.flow th {
+    background: var(--paper); color: var(--ink); font-weight: 650;
+    white-space: nowrap; width: 9.5rem;
+  }
+  .table-scroll { overflow-x: auto; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; margin-top: 1.5rem; }
+  .card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+    padding: 1.35rem 1.4rem; font-size: 0.96rem;
+  }
+  .card ul { margin: 0.6rem 0 0 1.1rem; }
+  .card li { margin-bottom: 0.35rem; }
+  .badge {
+    display: inline-block; background: #F3EBDD; color: #8A6D3B;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; border-radius: 6px; padding: 0.15rem 0.5rem;
+    margin-left: 0.45rem; vertical-align: middle;
+  }
+
+  .dl-card {
+    background: var(--white); border: 1px solid var(--line); border-radius: 14px;
+    padding: 1.5rem 1.5rem; margin-top: 1.4rem;
+  }
+  .dl-card h3 { font-size: 1.2rem; }
+  pre.cmd {
+    background: #F2F6F3; border: 1px solid var(--line); border-radius: 10px;
+    padding: 0.9rem 1rem; margin: 0.9rem 0 0.6rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem; line-height: 1.5; overflow-x: auto;
+    white-space: pre; color: var(--ink);
+  }
+  .copy-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+
+  details {
+    border-bottom: 1px solid var(--line); padding: 1rem 0;
+  }
+  details:first-of-type { border-top: 1px solid var(--line); margin-top: 1.5rem; }
+  summary {
+    cursor: pointer; color: var(--ink); font-weight: 650; font-size: 1.02rem;
+    list-style: none; position: relative; padding-right: 2rem;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+"; position: absolute; right: 0.25rem; top: 0;
+    color: var(--green); font-weight: 600; font-size: 1.2rem;
+  }
+  details[open] summary::after { content: "\2212"; }
+  details p { margin-top: 0.7rem; font-size: 0.98rem; }
+
+  footer.site {
+    border-top: 1px solid var(--line); padding: 2.5rem 0 3rem;
+    font-size: 0.9rem; color: var(--caption);
+  }
+  footer.site .wrap { display: flex; flex-direction: column; gap: 0.6rem; }
+  footer.site .brand { font-size: 0.95rem; }
+  footer.site img { width: 20px; height: 20px; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 2.1rem; }
+    h2 { font-size: 1.45rem; }
+    .nav-links { display: none; }
+    .cols { grid-template-columns: 1fr; }
+    section { padding: 3.25rem 0; }
+    .hero { padding: 3.5rem 0 3.25rem; }
+  }
+<style>
+  .claim { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.3rem; margin: 1.1rem 0; }
+  .claim p { margin: 0; }
+  .ground { color: var(--caption); font-size: 0.88rem; margin-top: 0.5rem !important; }
+  dl.faq dt { color: var(--ink); font-weight: 650; margin-top: 1.4rem; }
+  dl.faq dd { margin: 0.35rem 0 0 0; }
+  ul.plain { padding-left: 1.2rem; }
+  ul.plain li { margin: 0.45rem 0; }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <nav class="nav">
+    <a class="brand" href="index.html"><img src="assets/icon.png" alt="">Aloe Scribe</a>
+    <div class="nav-links">
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#data">Your data</a>
+      <a href="index.html#faq">FAQ</a>
+    </div>
+    <a class="btn small" href="index.html#download">Download</a>
+  </nav>
+</header>
+
+<main>
+<section class="hero" style="padding-bottom: 2.5rem;">
+  <div class="wrap">
+    <p class="kicker">Security and privacy</p>
+    <h1>There is no server. That is the security model.</h1>
+    <p class="lede">Aloe Scribe runs entirely on your computer. Your audio, transcripts, and summaries never leave your machine, because there is no server for them to go to. The strongest privacy promise is not a policy. It is an incapacity.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What happens on your device</h2>
+    <p>Recording, transcription, speaker identification, and summarization all run locally using open models (Parakeet for speech, CAM++ for voices, Qwen for summaries). No account, no login, no cloud. The models are named here on purpose, so the claim can be checked, not just believed.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What we can see</h2>
+    <p>The app talks to the network for exactly two things. Downloading the app and its models from GitHub releases, and checking GitHub for updates. Those requests carry no meeting content. Like any download, GitHub's servers see the requesting IP address. We operate no servers, collect no analytics, and could not read your transcripts if we wanted to.</p>
+    <div class="claim">
+      <p><strong>Verify it yourself.</strong> Run Aloe Scribe behind an outbound firewall such as Little Snitch and block everything except github.com. Every feature except updates keeps working. We invite that test.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Your files, your format</h2>
+    <p>Transcripts are plain Markdown files on your disk, in a folder you choose. Voice profiles are a human-readable JSON file you can open, inspect, and delete. Uninstalling the app leaves nothing behind anywhere else. There is no license server and no account, so the app keeps working even if we disappear.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Voice profiles and biometric law</h2>
+    <p>Speaker profiles are created only when you name a speaker, stored only on your device, and deletable at any time. Courts have held that biometric data processed and stored entirely on the user's device is not possessed or collected by the software vendor (G.T. v. Samsung, 7th Cir. 2026, and Barnett v. Apple, Ill. App. 2023).</p>
+    <p>If you use voice profiles for other people, biometric consent laws such as Illinois BIPA may apply to you as the person deploying them. Get consent before naming coworkers' or clients' voices.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Recording consent is on you</h2>
+    <p>Aloe Scribe records your meetings at your direction. Many states and countries require the consent of everyone on the call, regardless of where the recording is stored. Tell people you are recording. We recommend announcing it at the start of every meeting, and the app shows its recording state while capture is running. Local storage changes who can access your data. It does not change consent law.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Where we stand under GDPR</h2>
+    <p>For meeting content, Aloe Scribe the company is neither a data controller nor a data processor, because we never receive the data. There are no international transfers and no subprocessors for your content. You, or your employer, control what you record. Workplace deployments in the EU should run their own assessment, particularly before enabling voice profiles for staff.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Supply chain, and how to verify us</h2>
+    <ul class="plain">
+      <li>The source code is public at <a href="https://github.com/vinnybarbs/Aloe-Scribe">github.com/vinnybarbs/Aloe-Scribe</a>, with pinned, hash-locked dependencies.</li>
+      <li>Releases publish SHA-256 checksums for their downloads.</li>
+      <li>Model files are fetched over HTTPS from pinned release URLs.</li>
+      <li>Dependencies are scanned continuously (GitHub vulnerability alerts, CodeQL, and a weekly audit).</li>
+      <li>macOS notarization and Windows code signing are in progress and will appear here when live.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What we do not have</h2>
+    <p>No SOC 2 report, because there is no service organization to audit. No cloud penetration test, because there is no cloud. The Windows beta installer is not yet code signed. If your security review needs a control mapping or the full list of network calls, ask, most hosted-service questions close as not applicable here, and we would rather show you than have you take our word.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Questions security reviewers ask</h2>
+    <dl class="faq">
+      <dt>Where is our data stored and who can access it?</dt>
+      <dd>On the employee's device only, as Markdown and JSON files. The vendor has no access path. Data residency equals device residency, and your existing endpoint controls (FileVault, BitLocker, MDM) are the controls.</dd>
+      <dt>Could a compromised model exfiltrate data?</dt>
+      <dd>Models are static weights executed by the app. They have no network access of their own, and the app makes no content-bearing network calls regardless of what a model outputs.</dd>
+      <dt>What is our wiretap exposure if employees record meetings?</dt>
+      <dd>The same as with any recorder. Adopt a policy requiring verbal disclosure at the start of meetings, especially with participants in all-party consent states.</dd>
+      <dt>How are vulnerabilities reported?</dt>
+      <dd>Privately, through <a href="https://github.com/vinnybarbs/Aloe-Scribe/security">GitHub security advisories</a> on the repository.</dd>
+      <dt>What happens if the vendor disappears?</dt>
+      <dd>The app keeps working. No license server, no account, no dependency on our existence. Your files are open formats.</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="caption">This page describes the product's architecture and cites court decisions about comparable architectures. It is not legal advice, and it does not make your recordings lawful. When in doubt about consent or biometric rules in your jurisdiction, ask a lawyer, and tell people you are recording.</p>
+  </div>
+</section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p class="brand"><img src="assets/icon.png" alt="">Aloe Scribe</p>
+    <p>The private meeting notepad. Your audio never leaves the machine.</p>
+    <p><a href="index.html">Home</a> · <a href="https://github.com/vinnybarbs/Aloe-Scribe">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
