@@ -1064,10 +1064,13 @@ class AloeScribeWindow(QMainWindow):
         differences in loudness are visible again."""
         import math
 
-        if level <= 0.003:
+        # Gate at -38 dB: a silent room's noise floor (fan, HVAC, mic
+        # self-noise) sits around -40 to -35 dB and should read as ZERO —
+        # the meter's job is "am I being heard", not "does this room hum".
+        if level <= 0.0126:
             return 0
         db = 20.0 * math.log10(min(1.0, level))
-        return int(max(0.0, min(1.0, (db + 50.0) / 50.0)) * 1000)
+        return int(max(0.0, min(1.0, (db + 40.0) / 40.0)) * 1000)
 
     def _update_mic_level(self, level: float):
         bar = self._mic_level_bar
