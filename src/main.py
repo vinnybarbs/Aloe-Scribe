@@ -95,14 +95,19 @@ def _resolve_config_path() -> Path:
         Path.home() / "Library" / "Application Support" / "Aloe Scribe"
     )
     cfg = appsupport / "config.toml"
-    if not cfg.exists():
+    if not cfg.exists() or cfg.stat().st_size == 0:
         appsupport.mkdir(parents=True, exist_ok=True)
         example = ROOT / "config" / "config.toml.example"
         seed = example if example.exists() else bundled
         try:
-            cfg.write_text(seed.read_text())
-        except Exception:
-            cfg.write_text("")
+            # Frozen builds default to ASCII encoding, and the template
+            # holds UTF-8 bytes — always name the encoding explicitly.
+            cfg.write_text(seed.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception as e:
+            # Never leave a broken settings file behind — run read-only off
+            # the bundled template instead.
+            print(f"Config seed failed ({e}); using bundled template", file=sys.stderr)
+            return seed
     return cfg
 
 
@@ -229,8 +234,20 @@ def load_config() -> dict:
     if not CONFIG_PATH.exists():
         log.error(f"Config not found: {CONFIG_PATH}")
         sys.exit(1)
+    example = ROOT / "config" / "config.toml.example"
+    base: dict = {}
+    if example.exists():
+        with open(example, "rb") as f:
+            base = tomllib.load(f)
     with open(CONFIG_PATH, "rb") as f:
-        return tomllib.load(f)
+        user = tomllib.load(f)
+    # Overlay per section: user values win, template fills every gap.
+    for section, values in user.items():
+        if isinstance(values, dict) and isinstance(base.get(section), dict):
+            base[section].update(values)
+        else:
+            base[section] = values
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +272,8 @@ class AloeScribe:
         _dir = (config["output"].get("local_dir") or "").strip()
         # None until the user picks a destination — recording is gated on it.
         self.output_dir = Path(_dir).expanduser() if _dir else None
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if self.output_dir is not None:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
         # Keep the WAV next to the transcript instead of deleting it after a
         # successful transcription (~200 MB/hour). Lets a mislabeled meeting
         # be re-analyzed or re-transcribed later.
@@ -373,7 +391,7 @@ class AloeScribe:
             live_preview=(backend in ("parakeet", "faster_whisper")),
             current_mic=config["audio"].get("mic_source", ""),
             current_system=config["audio"].get("system_source", ""),
-            current_output_dir=str(self.output_dir),
+            current_output_dir=str(self.output_dir) if self.output_dir else "",
         )
 
     # ------------------------------------------------------------------ #
@@ -412,7 +430,7 @@ class AloeScribe:
 
         # Persist to config.toml
         import re
-        config_text = CONFIG_PATH.read_text()
+        config_text = CONFIG_PATH.read_text(encoding="utf-8")
         config_text = re.sub(
             r'mic_source\s*=\s*"[^"]*"',
             f'mic_source = "{mic_source}"',
@@ -423,7 +441,7 @@ class AloeScribe:
             f'system_source = "{system_source}"',
             config_text,
         )
-        CONFIG_PATH.write_text(config_text)
+        CONFIG_PATH.write_text(config_text, encoding="utf-8")
 
     def _self_update(self):
         """The in-app Update button: hand off to update-mac.sh in a detached
@@ -462,7 +480,7 @@ class AloeScribe:
         import re
 
         try:
-            text = CONFIG_PATH.read_text()
+            text = CONFIG_PATH.read_text(encoding="utf-8")
             val = "true" if enabled else "false"
             m = re.search(r"(?ms)^\[summarizer\]\n(.*?)(?=^\[|\Z)", text)
             if m and re.search(r"(?m)^enabled\s*=", m.group(1)):
@@ -478,7 +496,7 @@ class AloeScribe:
                 )
             else:
                 text = text.rstrip() + f"\n\n[summarizer]\nenabled = {val}\n"
-            CONFIG_PATH.write_text(text)
+            CONFIG_PATH.write_text(text, encoding="utf-8")
         except Exception as e:
             log.warning(f"Could not persist summarizer setting: {e}")
 
@@ -492,7 +510,7 @@ class AloeScribe:
         # Persist to config.toml. We store the user's literal value so a path
         # under their home keeps its ~/ prefix if that's what they typed.
         import re
-        config_text = CONFIG_PATH.read_text()
+        config_text = CONFIG_PATH.read_text(encoding="utf-8")
         # Escape for regex replacement value
         escaped = new_dir.replace("\\", "\\\\").replace('"', '\\"')
         config_text = re.sub(
@@ -500,7 +518,7 @@ class AloeScribe:
             f'local_dir = "{escaped}"',
             config_text,
         )
-        CONFIG_PATH.write_text(config_text)
+        CONFIG_PATH.write_text(config_text, encoding="utf-8")
 
     # ------------------------------------------------------------------ #
     # Recording + transcription                                            #
@@ -1251,7 +1269,8 @@ class AloeScribe:
         md_path = (
             job.get("md_path")
             or getattr(self, "_md_path", None)
-            or (self.output_dir / f"{wav_path.stem}.md")
+            # Recovery with no folder chosen: land beside the WAV itself.
+            or ((self.output_dir or wav_path.parent) / f"{wav_path.stem}.md")
         )
         # A user-typed meeting title becomes the FILENAME too — retrieval
         # agents rank on it, and "manual-recording" made every meeting look
