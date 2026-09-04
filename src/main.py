@@ -81,7 +81,33 @@ if getattr(sys, "frozen", False):
 else:
     ROOT = Path(__file__).parent.parent
 
-CONFIG_PATH = ROOT / "config" / "config.toml"
+def _resolve_config_path() -> Path:
+    """User settings live OUTSIDE the app bundle. Writing config into the
+    bundle broke twice at once when the signed DMG shipped: the mounted
+    image is read-only, so every setting silently failed to save, and
+    editing a notarized bundle's contents invalidates its signature seal.
+    Frozen builds use ~/Library/Application Support, seeded once from the
+    bundled config (or its example). Dev runs keep the repo config."""
+    bundled = ROOT / "config" / "config.toml"
+    if not getattr(sys, "frozen", False):
+        return bundled
+    appsupport = (
+        Path.home() / "Library" / "Application Support" / "Aloe Scribe"
+    )
+    cfg = appsupport / "config.toml"
+    if not cfg.exists():
+        appsupport.mkdir(parents=True, exist_ok=True)
+        seed = bundled if bundled.exists() else (
+            ROOT / "config" / "config.toml.example"
+        )
+        try:
+            cfg.write_text(seed.read_text())
+        except Exception:
+            cfg.write_text("")
+    return cfg
+
+
+CONFIG_PATH = _resolve_config_path()
 SRC = ROOT / "src"
 if SRC.exists():
     sys.path.insert(0, str(SRC))
