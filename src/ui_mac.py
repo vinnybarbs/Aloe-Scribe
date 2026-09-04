@@ -1334,7 +1334,7 @@ class AloeScribeWindow(QMainWindow):
         # Surface "OneDrive-Foo" as the parent context when it's nested
         # under CloudStorage. Otherwise show just the leaf — it's enough.
         if "CloudStorage" in full_str and parent and parent != "CloudStorage":
-            # e.g. ".../OneDrive-Trace3/My Documents/AloeScribe Transcriptions"
+            # e.g. ".../OneDrive-AcmeCorp/My Documents/AloeScribe Transcriptions"
             # → "OneDrive · AloeScribe Transcriptions"
             cloud_segment = next(
                 (p for p in path.parts if p.startswith("OneDrive")
