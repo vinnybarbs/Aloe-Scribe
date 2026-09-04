@@ -72,7 +72,9 @@ model_path = "~/whisper.cpp/models/ggml-large-v3-turbo.bin"
 
 [output]
 # Where transcripts land locally before syncing
-local_dir = "~/meetings"
+# Empty means not chosen yet: the app requires picking a folder before
+# the first recording.
+local_dir = ""
 
 # Obsidian vault mode: attendee names in the document body become
 # [[wikilinks]], so each person is a linked note with backlinks from every

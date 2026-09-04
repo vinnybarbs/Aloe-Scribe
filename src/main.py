@@ -97,9 +97,8 @@ def _resolve_config_path() -> Path:
     cfg = appsupport / "config.toml"
     if not cfg.exists():
         appsupport.mkdir(parents=True, exist_ok=True)
-        seed = bundled if bundled.exists() else (
-            ROOT / "config" / "config.toml.example"
-        )
+        example = ROOT / "config" / "config.toml.example"
+        seed = example if example.exists() else bundled
         try:
             cfg.write_text(seed.read_text())
         except Exception:
@@ -253,7 +252,9 @@ class AloeScribe:
         )
 
         # Resolve output dir
-        self.output_dir = Path(config["output"]["local_dir"]).expanduser()
+        _dir = (config["output"].get("local_dir") or "").strip()
+        # None until the user picks a destination — recording is gated on it.
+        self.output_dir = Path(_dir).expanduser() if _dir else None
         self.output_dir.mkdir(parents=True, exist_ok=True)
         # Keep the WAV next to the transcript instead of deleting it after a
         # successful transcription (~200 MB/hour). Lets a mislabeled meeting
@@ -507,6 +508,9 @@ class AloeScribe:
 
     def _start_recording(self, meeting: Meeting):
         """Start capturing audio for this meeting."""
+        if self.output_dir is None:
+            log.warning("Recording refused: no save folder chosen yet")
+            return
         self._current_meeting = meeting
         self._recording_start = datetime.now()
         # Fresh meeting, fresh tags/notes (the notes window resets its own UI).

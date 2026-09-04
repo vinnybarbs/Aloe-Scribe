@@ -1265,8 +1265,10 @@ class AloeScribeWindow(QMainWindow):
         self._content_layout.addWidget(label)
 
         row = QHBoxLayout()
-        full_path = self._output_dir or "~/meetings"
-        short, tooltip = self._pretty_output_path(full_path)
+        if (self._output_dir or "").strip():
+            short, tooltip = self._pretty_output_path(self._output_dir)
+        else:
+            short, tooltip = "No folder chosen yet", "Required before recording"
         self._output_dir_label = QLabel(short)
         self._output_dir_label.setObjectName("meetingTime")
         self._output_dir_label.setWordWrap(False)
@@ -1345,7 +1347,7 @@ class AloeScribeWindow(QMainWindow):
         return leaf, tooltip
 
     def _choose_output_folder(self):
-        start = Path(self._output_dir or "~/meetings").expanduser()
+        start = Path(self._output_dir).expanduser() if (self._output_dir or "").strip() else Path.home()
         chosen = QFileDialog.getExistingDirectory(
             self,
             "Choose where Aloe Scribe saves transcripts",
@@ -1422,14 +1424,20 @@ class AloeScribeWindow(QMainWindow):
         if err:
             QMessageBox.warning(self, "Aloe Scribe", err)
 
-    def _resolved_output_dir(self) -> Path:
-        return (
-            Path(self._output_dir).expanduser()
-            if self._output_dir
-            else Path("~/meetings").expanduser()
-        )
+    def _resolved_output_dir(self):
+        if (self._output_dir or "").strip():
+            return Path(self._output_dir).expanduser()
+        return None
 
     def _open_recordings(self):
+        if self._resolved_output_dir() is None:
+            QMessageBox.information(
+                self, "Aloe Scribe",
+                "Choose where transcripts save first.",
+            )
+            self._choose_output_folder()
+            if self._resolved_output_dir() is None:
+                return
         dlg = RecordingsDialog(
             self,
             self._resolved_output_dir(),
@@ -1961,6 +1969,16 @@ class AloeScribeWindow(QMainWindow):
                 return
         except RuntimeError:
             pass  # combo from a previous screen was torn down; proceed
+        if not (self._output_dir or "").strip():
+            QMessageBox.information(
+                self,
+                "Aloe Scribe",
+                "Choose where transcripts save first. Pick any folder you "
+                "like, your notes app vault works well.",
+            )
+            self._choose_output_folder()
+            if not (self._output_dir or "").strip():
+                return
         try:
             from meeting import Meeting
             manual = Meeting(title="Manual Recording")
@@ -1977,16 +1995,19 @@ class AloeScribeWindow(QMainWindow):
         threading.Thread(target=self.on_stop_recording, daemon=True).start()
 
     def _open_folder(self):
-        # Open the user's configured transcript destination, falling back to
-        # ~/meetings if the path is empty or invalid.
-        path = Path(self._output_dir).expanduser() if self._output_dir else Path("~/meetings").expanduser()
+        # Open the chosen transcript destination. Never invent one.
+        d = self._resolved_output_dir()
+        if d is None:
+            self._choose_output_folder()
+            d = self._resolved_output_dir()
+            if d is None:
+                return
         try:
-            path.mkdir(parents=True, exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            log.warning(f"Could not create {path}: {e}")
-            path = Path("~/meetings").expanduser()
-            path.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(["open", str(path)])
+            log.warning(f"Could not open {d}: {e}")
+            return
+        subprocess.Popen(["open", str(d)])
 
     def closeEvent(self, event):
         """Hide to tray instead of quitting."""
@@ -2209,7 +2230,9 @@ class AloeScribeApp:
             self._window._open_folder()
             return
         # Fallback if the window isn't up yet.
-        path = Path(self._current_output_dir).expanduser() if self._current_output_dir else Path("~/meetings").expanduser()
+        if not (self._current_output_dir or "").strip():
+            return
+        path = Path(self._current_output_dir).expanduser()
         path.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(["open", str(path)])
 

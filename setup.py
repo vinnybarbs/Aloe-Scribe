@@ -14,7 +14,9 @@ from setuptools import setup
 APP = ["src/main.py"]
 DATA_FILES = [
     ("assets", ["assets/icon.png"]),
-    ("config", ["config/config.toml"]),
+    # Only the TEMPLATE ships. Bundling the live config once leaked the
+    # developer's own OneDrive path into the public DMG.
+    ("config", ["config/config.toml.example"]),
     # Swift helper that captures system audio via ScreenCaptureKit. Ends up
     # at Contents/Resources/bin/aloe-audio-capture inside the .app bundle —
     # recorder_mac._helper_path() looks for it there.
