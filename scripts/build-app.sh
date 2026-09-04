@@ -98,6 +98,47 @@ fi
 echo "Signing .app bundle (${APP_IDENTIFIER})..."
 codesign --force --sign "$SIGN_ID" --identifier "${APP_IDENTIFIER}" "$APP_DIR"
 
+# 4b. Prune PySide6 to what the app uses (QtCore/QtGui/QtWidgets and
+# their support). py2app copies the whole 1.1 GB toolbox, including Qt's
+# own developer apps, whose unsigned binaries also fail notarization.
+PYSIDE="$APP_DIR/Contents/Resources/lib/python3.12/PySide6"
+if [ -d "$PYSIDE" ]; then
+    python3 - "$PYSIDE" <<'PRUNE'
+import pathlib, shutil, sys
+
+ps = pathlib.Path(sys.argv[1])
+KEEP_MODULES = {"QtCore", "QtGui", "QtWidgets", "QtPrintSupport", "QtDBus"}
+KEEP_TOP = {
+    "Qt", "__init__.py", "_config.py", "_git_pyside_version.py",
+    "support", "scripts", "PySide6_Essentials.json", "PySide6_Addons.json",
+} | {f"{m}.abi3.so" for m in KEEP_MODULES} | {f"{m}.pyi" for m in KEEP_MODULES}
+for item in ps.iterdir():
+    if item.name in KEEP_TOP:
+        continue
+    shutil.rmtree(item, ignore_errors=True) if item.is_dir() else item.unlink(missing_ok=True)
+
+qt = ps / "Qt"
+shutil.rmtree(qt / "qml", ignore_errors=True)
+shutil.rmtree(qt / "libexec", ignore_errors=True)
+lib = qt / "lib"
+if lib.exists():
+    keep_fw = {f"Qt{m[2:]}" if False else m for m in KEEP_MODULES}
+    keep_fw = {"QtCore", "QtGui", "QtWidgets", "QtPrintSupport", "QtDBus"}
+    for fw in lib.iterdir():
+        name = fw.name.replace(".framework", "")
+        if name not in keep_fw:
+            shutil.rmtree(fw, ignore_errors=True)
+plugins = qt / "plugins"
+KEEP_PLUGINS = {"platforms", "styles", "imageformats", "iconengines"}
+if plugins.exists():
+    for pl in plugins.iterdir():
+        if pl.name not in KEEP_PLUGINS:
+            shutil.rmtree(pl, ignore_errors=True)
+print("PySide6 pruned")
+PRUNE
+    du -sh "$PYSIDE" | awk '{print "  PySide6 now " $1}'
+fi
+
 # 5. Install to /Applications.
 echo "Installing to /Applications/${APP_NAME}.app..."
 rm -rf "/Applications/${APP_NAME}.app"

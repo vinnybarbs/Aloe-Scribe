@@ -26,12 +26,30 @@ sleep 2
 bash scripts/build-app.sh >/dev/null
 
 APP="/Applications/Aloe Scribe.app"
-echo "[2/6] Signing with: $DEV_ID"
-codesign --force --deep --options runtime --timestamp \
+echo "[2/6] Signing inside-out with: $DEV_ID"
+ENT="scripts/entitlements.plist"
+# Every nested Mach-O first: extension modules, dylibs, then frameworks,
+# then executables, then the bundle. --deep is deprecated and skips
+# nested bundles, which is exactly what the notary rejected.
+find "$APP/Contents" -type f \( -name "*.so" -o -name "*.dylib" \) -print0 |
+    while IFS= read -r -d '' f; do
+        codesign --force --options runtime --timestamp --sign "$DEV_ID" "$f" >/dev/null 2>&1 || \
+        codesign --force --options runtime --timestamp --sign "$DEV_ID" "$f"
+    done
+find "$APP/Contents" -type d -name "*.framework" -print0 |
+    while IFS= read -r -d '' fw; do
+        codesign --force --options runtime --timestamp --sign "$DEV_ID" "$fw"
+    done
+codesign --force --options runtime --timestamp --entitlements "$ENT" \
     --sign "$DEV_ID" "$APP/Contents/Resources/bin/aloe-audio-capture"
-codesign --force --deep --options runtime --timestamp \
+find "$APP/Contents/MacOS" -type f -print0 |
+    while IFS= read -r -d '' x; do
+        codesign --force --options runtime --timestamp --entitlements "$ENT" \
+            --sign "$DEV_ID" "$x"
+    done
+codesign --force --options runtime --timestamp --entitlements "$ENT" \
     --sign "$DEV_ID" "$APP"
-codesign --verify --deep --strict "$APP"
+codesign --verify --strict "$APP"
 
 echo "[3/6] Packaging the DMG..."
 DMG="dist/AloeScribe-$VER.dmg"
