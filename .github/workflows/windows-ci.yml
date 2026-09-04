@@ -65,8 +65,8 @@ jobs:
       - name: Privacy audit (bundle must ship only the config template)
         shell: pwsh
         run: |
-          $cfg = Get-ChildItem "dist/Aloe Scribe/config" -File | Select-Object -ExpandProperty Name
-          if (@($cfg) -ne @("config.toml.example")) { Write-Error "Bundle config dir must hold only config.toml.example, found: $cfg"; exit 1 }
+          $cfg = (Get-ChildItem "dist/Aloe Scribe/config" -File | Select-Object -ExpandProperty Name | Sort-Object) -join ","
+          if ($cfg -ne "config.toml.example") { Write-Error "Bundle config dir must hold only config.toml.example, found: $cfg"; exit 1 }
           $tpl = Get-Content "dist/Aloe Scribe/config/config.toml.example" -Raw
           if ($tpl -notmatch '(?m)^local_dir = ""') { Write-Error "Template local_dir is not empty"; exit 1 }
           if ($tpl -notmatch '(?m)^ical_url = ""') { Write-Error "Template ical_url is not empty"; exit 1 }
