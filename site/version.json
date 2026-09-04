@@ -3,5 +3,10 @@
     "version": "0.1",
     "url": "https://github.com/vinnybarbs/Aloe-Scribe/releases/download/windows-v0.1/AloeScribeSetup.exe",
     "sha256": "13c37f9e37693275fb23453e287ae27ac0d54fc22c6ba7767cc9a6ead88ae3a1"
+  },
+  "mac": {
+    "version": "1.0.1",
+    "url": "https://github.com/vinnybarbs/Aloe-Scribe/releases/download/mac-v1.0.1/AloeScribe-1.0.1.dmg",
+    "sha256": "30a7f94d979aeafde7997e67322293e3e96c556c2e171f0a08c6ca410245ce08"
   }
 }
