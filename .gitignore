@@ -18,6 +18,11 @@ bin/aloe-audio-capture
 # user's calendar URL / output folder never collides with an update.
 config/config.toml
 
+# Meeting transcripts the app drops in the repo root during dev runs. These
+# are private work notes and must never reach the public repo.
+/20*-*.md
+
 # Parakeet model weights — fetched from GitHub Release at install time
 models/
 .agents/
+developer-id.csr

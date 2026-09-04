@@ -54,9 +54,6 @@ jobs:
           pip install pyinstaller==6.11.1
       - name: Generate icon.ico
         run: python -c "from PIL import Image; Image.open('assets/icon.png').save('assets/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
-      - name: Seed config.toml (gitignored, needed by the bundle)
-        shell: pwsh
-        run: if (-not (Test-Path config/config.toml)) { Copy-Item config/config.toml.example config/config.toml }
       - name: Build the .exe
         run: pyinstaller --noconfirm --clean aloe-scribe-windows.spec
       - name: Verify the .exe was produced
@@ -65,6 +62,14 @@ jobs:
           $exe = "dist/Aloe Scribe/Aloe Scribe.exe"
           if (-not (Test-Path $exe)) { Write-Error "exe not built"; exit 1 }
           Get-Item $exe | Select-Object Name, Length | Format-List
+      - name: Privacy audit (bundle must ship only the config template)
+        shell: pwsh
+        run: |
+          $cfg = Get-ChildItem "dist/Aloe Scribe/config" -File | Select-Object -ExpandProperty Name
+          if (@($cfg) -ne @("config.toml.example")) { Write-Error "Bundle config dir must hold only config.toml.example, found: $cfg"; exit 1 }
+          $tpl = Get-Content "dist/Aloe Scribe/config/config.toml.example" -Raw
+          if ($tpl -notmatch '(?m)^local_dir = ""') { Write-Error "Template local_dir is not empty"; exit 1 }
+          if ($tpl -notmatch '(?m)^ical_url = ""') { Write-Error "Template ical_url is not empty"; exit 1 }
       - name: Upload the built app
         uses: actions/upload-artifact@v4
         with:

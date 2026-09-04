@@ -3,8 +3,10 @@
 ; bundled faster-whisper model, with Start menu and desktop shortcuts and an
 ; uninstaller. Compile with: scripts\build-installer-windows.ps1
 ;
-; Per-user install (no admin prompt). Installs to %LOCALAPPDATA%\Programs so the
-; app can write config.toml back. The model lands in {app}\models\<name>, which
+; Per-user install (no admin prompt) to %LOCALAPPDATA%\Programs. User settings
+; live in %APPDATA%\Aloe Scribe\config.toml, seeded by the app from the bundled
+; template on first launch — the bundle itself ships NO personal config (the
+; mac-v1.0.0 recall lesson). The model lands in {app}\models\<name>, which
 ; main.py's _resolve_local_model finds next to the .exe.
 
 #define MyAppName "Aloe Scribe"

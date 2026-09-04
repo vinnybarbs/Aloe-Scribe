@@ -91,9 +91,15 @@ def _resolve_config_path() -> Path:
     bundled = ROOT / "config" / "config.toml"
     if not getattr(sys, "frozen", False):
         return bundled
-    appsupport = (
-        Path.home() / "Library" / "Application Support" / "Aloe Scribe"
-    )
+    if sys.platform == "win32":
+        appsupport = (
+            Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+            / "Aloe Scribe"
+        )
+    else:
+        appsupport = (
+            Path.home() / "Library" / "Application Support" / "Aloe Scribe"
+        )
     cfg = appsupport / "config.toml"
     if not cfg.exists() or cfg.stat().st_size == 0:
         appsupport.mkdir(parents=True, exist_ok=True)

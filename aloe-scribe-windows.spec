@@ -14,14 +14,14 @@
 import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-# config.toml is gitignored (per-user, seeded from the example). Always ship the
-# template so a clean build works; ship the live config.toml too if it exists.
+# NEVER bundle config/config.toml. It is the builder's personal settings file
+# (folders, devices, calendar URL) and shipping it is a privacy leak — exactly
+# what forced the mac-v1.0.0 recall. The app seeds each user's own config from
+# the template on first launch.
 datas = [
     ("assets/icon.png", "assets"),
     ("config/config.toml.example", "config"),
 ]
-if os.path.exists("config/config.toml"):
-    datas.append(("config/config.toml", "config"))
 binaries = []
 hiddenimports = [
     "transcriber_faster_whisper",  # selected via a dynamic import in main.py

@@ -58,6 +58,21 @@ codesign --force --options runtime --timestamp --entitlements "$ENT" \
     --sign "$DEV_ID" "$APP"
 codesign --verify --strict "$APP"
 
+# Privacy audit — the mac-v1.0.0 recall happened because the DMG bundled the
+# builder's personal config.toml. No release leaves this machine until the
+# bundle proves it carries only the pristine template.
+echo "[audit] Verifying the bundle ships no personal data..."
+CFG_DIR="$APP/Contents/Resources/config"
+[ "$(ls "$CFG_DIR")" = "config.toml.example" ] \
+    || { echo "AUDIT FAIL: $CFG_DIR must hold only config.toml.example" >&2; ls "$CFG_DIR" >&2; exit 1; }
+grep -Eq '^local_dir = ""' "$CFG_DIR/config.toml.example" \
+    || { echo "AUDIT FAIL: template local_dir is not empty" >&2; exit 1; }
+grep -Eq '^ical_url = ""' "$CFG_DIR/config.toml.example" \
+    || { echo "AUDIT FAIL: template ical_url is not empty" >&2; exit 1; }
+if grep -rliE "onedrive|trace3|cloudstorage|$(whoami)" "$CFG_DIR"; then
+    echo "AUDIT FAIL: personal marker found in bundled config" >&2; exit 1
+fi
+
 echo "[3/6] Packaging the DMG..."
 DMG="dist/AloeScribe-$VER.dmg"
 bash scripts/build-dmg.sh "$APP" "$DMG" >/dev/null

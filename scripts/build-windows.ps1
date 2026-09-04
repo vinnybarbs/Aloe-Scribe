@@ -30,10 +30,9 @@ if (-not (Test-Path $ico)) {
     Write-Host "  $ico already present."
 }
 
-if (-not (Test-Path "config\config.toml")) {
-    Copy-Item "config\config.toml.example" "config\config.toml"
-    Write-Host "  Seeded config\config.toml from the template."
-}
+# The bundle ships only config.toml.example. A personal config\config.toml on
+# the build machine must never reach the app — the runtime seeds each user's
+# config in %APPDATA% from the template on first launch.
 
 Write-Host "[3/3] Building with PyInstaller (a few minutes)..." -ForegroundColor Green
 & $Python -m PyInstaller --noconfirm --clean aloe-scribe-windows.spec
