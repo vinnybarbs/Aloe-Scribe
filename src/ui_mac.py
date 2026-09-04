@@ -2085,16 +2085,17 @@ class AloeScribeApp:
         self._app.setApplicationName("Aloe Scribe")
         self._app.setApplicationDisplayName("Aloe Scribe")
 
-        # Dock icon
-        # Find icon — works both in dev and inside .app bundle
-        if getattr(sys, "frozen", False):
-            icon_path = Path(sys.executable).parent.parent / "Resources" / "assets" / "icon.png"
-        else:
+        # Dock icon. In the bundle, the Dock identity is AppIcon.icns
+        # (the macOS-styled rounded tile). Overriding it at runtime with
+        # the raw leaf PNG made the icon visibly change the moment the
+        # app launched, so the override now exists only for dev runs
+        # where there is no bundle icon at all.
+        if not getattr(sys, "frozen", False):
             icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
-        if icon_path.exists():
-            self._app.setWindowIcon(QIcon(str(icon_path)))
-        else:
-            self._app.setWindowIcon(_make_leaf_icon())
+            if icon_path.exists():
+                self._app.setWindowIcon(QIcon(str(icon_path)))
+            else:
+                self._app.setWindowIcon(_make_leaf_icon())
 
         # Don't quit when window is closed (hidden to tray)
         self._app.setQuitOnLastWindowClosed(False)
