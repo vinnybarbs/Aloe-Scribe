@@ -36,9 +36,16 @@ find "$APP/Contents" -type f \( -name "*.so" -o -name "*.dylib" \) -print0 |
         codesign --force --options runtime --timestamp --sign "$DEV_ID" "$f" >/dev/null 2>&1 || \
         codesign --force --options runtime --timestamp --sign "$DEV_ID" "$f"
     done
+# pip-shipped Qt frameworks are malformed bundles (no Current symlink),
+# so codesign rejects the .framework directory. Sign the framework's
+# actual Mach-O binary directly — the notary accepts that.
 find "$APP/Contents" -type d -name "*.framework" -print0 |
     while IFS= read -r -d '' fw; do
-        codesign --force --options runtime --timestamp --sign "$DEV_ID" "$fw"
+        base="$(basename "$fw" .framework)"
+        for bin in "$fw"/Versions/*/"$base"; do
+            [ -f "$bin" ] && codesign --force --options runtime --timestamp \
+                --sign "$DEV_ID" "$bin"
+        done
     done
 codesign --force --options runtime --timestamp --entitlements "$ENT" \
     --sign "$DEV_ID" "$APP/Contents/Resources/bin/aloe-audio-capture"
