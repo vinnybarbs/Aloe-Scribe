@@ -71,7 +71,7 @@ jobs:
           if ($tpl -notmatch '(?m)^local_dir = ""') { Write-Error "Template local_dir is not empty"; exit 1 }
           if ($tpl -notmatch '(?m)^ical_url = ""') { Write-Error "Template ical_url is not empty"; exit 1 }
       - name: Upload the built app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aloe-scribe-windows
           path: dist/Aloe Scribe/
@@ -109,7 +109,7 @@ jobs:
           if (-not (Test-Path $setup)) { Write-Error "installer not built"; exit 1 }
           Get-Item $setup | Select-Object Name, Length | Format-List
       - name: Upload the installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AloeScribeSetup
           path: installer/Output/AloeScribeSetup.exe
