@@ -2102,7 +2102,8 @@ class AloeScribeApp:
         # Set up as GUI app BEFORE creating QApplication
         _setup_macos_app()
 
-        self._app = QApplication(sys.argv)
+        # First-run setup may already own the QApplication; never make two.
+        self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setApplicationName("Aloe Scribe")
         self._app.setApplicationDisplayName("Aloe Scribe")
 

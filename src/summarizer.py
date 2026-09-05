@@ -235,15 +235,30 @@ def resolve_model(configured: str = "") -> Optional[str]:
     if configured:
         p = Path(configured).expanduser()
         return str(p) if p.is_dir() else configured
-    here = Path(__file__).resolve().parent.parent / "models" / LOCAL_MODEL_DIRNAME
-    if here.is_dir():
-        return str(here)
+    candidates = [
+        Path(__file__).resolve().parent.parent / "models" / LOCAL_MODEL_DIRNAME,
+        # First-run setup downloads models here (DMG-only installs).
+        Path.home() / "Library" / "Application Support" / "Aloe Scribe"
+        / "models" / LOCAL_MODEL_DIRNAME,
+        Path.home() / "aloe-scribe" / "models" / LOCAL_MODEL_DIRNAME,
+    ]
+    for here in candidates:
+        if here.is_dir():
+            return str(here)
     return DEFAULT_MODEL_ID
 
 
 def _worker_python() -> Optional[str]:
-    """The runtime venv's interpreter (mlx-lm lives there, not in the frozen
-    app)."""
+    """Interpreter for the summary subprocess. A vendored frozen Mac bundle
+    uses its own executable, which emulates `python -c` (dispatch at the
+    top of main.py), so mlx-lm loads from Resources/vendor with no venv on
+    the machine. Otherwise the project venv hosts the worker."""
+    import sys as _sys
+
+    if getattr(_sys, "frozen", False) and not hasattr(_sys, "_MEIPASS"):
+        vendor = Path(_sys.executable).parent.parent / "Resources" / "vendor"
+        if vendor.is_dir():
+            return _sys.executable
     for candidate in (
         Path.home() / "aloe-scribe" / ".venv" / "bin" / "python3",
         Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python3",

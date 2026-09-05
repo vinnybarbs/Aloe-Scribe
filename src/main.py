@@ -16,6 +16,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Worker dispatch. The diarizer and summarizer run heavy work in
+# subprocesses invoked as [interpreter, "-c", code, args...]. In the frozen
+# app there is no separate interpreter to invoke, so the app binary
+# emulates that calling convention itself: launched with -c it becomes a
+# plain Python running the worker code (with the bundle's vendored
+# packages on sys.path) and never starts the UI. This must stay ABOVE the
+# heavy imports so workers boot fast.
+if len(sys.argv) >= 3 and sys.argv[1] == "-c":
+    _code = sys.argv[2]
+    sys.argv = ["-c"] + sys.argv[3:]
+    if getattr(sys, "frozen", False) and not hasattr(sys, "_MEIPASS"):
+        _vendor = (
+            Path(sys.executable).parent.parent / "Resources" / "vendor"
+        )
+        if _vendor.is_dir() and str(_vendor) not in sys.path:
+            sys.path.insert(0, str(_vendor))
+    _g = {"__name__": "__main__", "__builtins__": __builtins__}
+    exec(compile(_code, "<worker>", "exec"), _g)
+    sys.exit(0)
+
 # Ensure Homebrew paths are available when running from a .app bundle
 # (macOS strips PATH to just /usr/bin:/bin for bundled apps)
 for _p in ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/whisper.cpp/build/bin")]:
@@ -31,12 +51,24 @@ for _p in ["/opt/homebrew/bin", "/usr/local/bin", os.path.expanduser("~/whisper.
 #   3. ~/aloe-scribe/.venv  (default install location from scripts/install-mac.sh)
 if getattr(sys, "frozen", False):
     from pathlib import Path as _Path
-    _candidates = []
+    # Newest bundles vendor the whole dependency set inside Resources, so
+    # a plain DMG download works with no venv on the machine. The venv
+    # paths remain as fallbacks for older installs and dev builds.
+    _sites = []
+    if not hasattr(sys, "_MEIPASS"):
+        _sites.append(
+            _Path(sys.executable).parent.parent / "Resources" / "vendor"
+        )
     if os.environ.get("ALOE_SCRIBE_VENV"):
-        _candidates.append(_Path(os.environ["ALOE_SCRIBE_VENV"]))
-    _candidates.append(_Path.home() / "aloe-scribe" / ".venv")
-    for _venv in _candidates:
-        _site = _venv / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+        _sites.append(
+            _Path(os.environ["ALOE_SCRIBE_VENV"])
+            / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+        )
+    _sites.append(
+        _Path.home() / "aloe-scribe" / ".venv"
+        / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+    )
+    for _site in _sites:
         if _site.is_dir():
             if str(_site) not in sys.path:
                 sys.path.insert(0, str(_site))
@@ -238,7 +270,15 @@ def _resolve_local_model(name: str) -> str:
     candidates = []
     if getattr(sys, "frozen", False):
         candidates.append(Path(sys.executable).parent / "models" / leaf)
+    # First-run setup downloads models here on macOS — a DMG-only install
+    # has no repo checkout to hold them.
+    if sys.platform == "darwin":
+        candidates.append(
+            Path.home() / "Library" / "Application Support" / "Aloe Scribe"
+            / "models" / leaf
+        )
     candidates.append(ROOT / "models" / leaf)
+    candidates.append(Path.home() / "aloe-scribe" / "models" / leaf)
     candidates.append(Path.cwd() / "models" / leaf)
     for c in candidates:
         try:
@@ -409,8 +449,10 @@ class AloeScribe:
 
         backend = config.get("transcriber", {}).get("backend", "whisper").lower()
         if backend == "parakeet":
-            model_id = config.get("transcriber", {}).get(
-                "parakeet_model", ParakeetTranscriber.DEFAULT_MODEL
+            model_id = _resolve_local_model(
+                config.get("transcriber", {}).get(
+                    "parakeet_model", ParakeetTranscriber.DEFAULT_MODEL
+                )
             )
             # When the model is a local directory (the default install fetches
             # the weights from GitHub, not Hugging Face), force HF offline mode.
@@ -1685,6 +1727,16 @@ if __name__ == "__main__":
         run_setup()
     else:
         try:
+            # DMG-only installs have no models yet — offer the one-time
+            # download before anything expects them.
+            if sys.platform == "darwin" and getattr(sys, "frozen", False):
+                try:
+                    import bootstrap
+                    bootstrap.ensure_models()
+                except SystemExit:
+                    raise
+                except Exception:
+                    log.exception("First-run setup failed; continuing")
             config = load_config()
             app = AloeScribe(config)
             app.run()

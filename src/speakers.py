@@ -418,10 +418,16 @@ print(json.dumps([[s.start, s.end, int(s.speaker)] for s in segs]))
 
 
 def _worker_python() -> Optional[str]:
-    """Interpreter for the diarization subprocess. The Mac app already
-    depends on the project venv at runtime (mlx & friends load from it), so
-    it is the natural host. None means no usable interpreter (e.g. the
-    frozen Windows .exe) — callers fall back to in-process diarization."""
+    """Interpreter for the diarization subprocess. A vendored frozen Mac
+    bundle uses ITS OWN executable, which emulates `python -c` when argv[1]
+    is -c (see the dispatch at the top of main.py), so a plain DMG download
+    needs no venv. Otherwise the project venv hosts the worker. None means
+    no usable interpreter (e.g. the frozen Windows .exe) — callers fall
+    back to in-process diarization."""
+    if getattr(sys, "frozen", False) and not hasattr(sys, "_MEIPASS"):
+        vendor = Path(sys.executable).parent.parent / "Resources" / "vendor"
+        if vendor.is_dir():
+            return sys.executable
     if os.environ.get("ALOE_SCRIBE_VENV"):
         p = Path(os.environ["ALOE_SCRIBE_VENV"]) / "bin" / "python3"
         if p.exists():

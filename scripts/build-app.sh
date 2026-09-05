@@ -139,6 +139,31 @@ PRUNE
     du -sh "$PYSIDE" | awk '{print "  PySide6 now " $1}'
 fi
 
+# 4c. Vendor the runtime dependency set into the bundle. mlx's namespace
+# layout breaks py2app's modulegraph, so these were never frozen — the app
+# used to reach into ~/aloe-scribe/.venv at runtime, which a plain DMG
+# download does not have. Copying site-packages into Resources/vendor makes
+# the bundle self-sufficient: main.py puts vendor on sys.path (transcriber)
+# and the app binary doubles as the worker interpreter (diarizer,
+# summarizer). Excluded: Qt (bundled and pruned above) and build-only
+# tooling. ~1 GB, and the models still download separately at first run.
+VENDOR="$APP_DIR/Contents/Resources/vendor"
+SITE="$(dirname "$VENV_PYTHON")/../lib/python3.12/site-packages"
+echo "Vendoring runtime packages into the bundle..."
+rsync -a --delete \
+    --exclude "PySide6*" --exclude "shiboken6*" \
+    --exclude "pip" --exclude "pip-*" \
+    --exclude "setuptools" --exclude "setuptools-*" \
+    --exclude "pkg_resources" --exclude "wheel*" \
+    --exclude "py2app*" --exclude "macholib*" \
+    --exclude "modulegraph*" --exclude "altgraph*" \
+    --exclude "PyObjCTest" \
+    --exclude "__pycache__" --exclude "*.pyc" \
+    "$SITE/" "$VENDOR/"
+du -sh "$VENDOR" | awk '{print "  vendor now " $1}'
+# The vendor step changed the bundle after its signature — refresh it.
+codesign --force --sign "$SIGN_ID" --identifier "${APP_IDENTIFIER}" "$APP_DIR"
+
 # 5. Install to /Applications.
 echo "Installing to /Applications/${APP_NAME}.app..."
 rm -rf "/Applications/${APP_NAME}.app"
