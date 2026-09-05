@@ -149,7 +149,12 @@ def _maybe_relocate_to_applications():
     cmd = f'sleep 1; open "{dest}"'
     if p.startswith("/Volumes/"):
         vol = "/Volumes/" + p.split("/")[2]
-        cmd += f'; sleep 3; hdiutil detach "{vol}" >/dev/null 2>&1 || true'
+        # One early detach can lose to Gatekeeper's scan of the fresh
+        # copy (seen in testing), so retry for up to ~30 seconds.
+        cmd += (
+            f'; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 3; '
+            f'hdiutil detach "{vol}" >/dev/null 2>&1 && break; done'
+        )
     subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True)
     sys.exit(0)
 
