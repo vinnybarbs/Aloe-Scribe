@@ -146,6 +146,13 @@
     padding: 1.5rem 1.5rem; margin-top: 1.4rem;
   }
   .dl-card h3 { font-size: 1.2rem; }
+  .signup-row { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.9rem; }
+  .signup-row input {
+    flex: 1 1 14rem; min-width: 0; padding: 0.6rem 0.9rem;
+    border: 1px solid var(--line); border-radius: 10px;
+    font: inherit; font-size: 0.95rem; color: var(--ink); background: var(--white);
+  }
+  .signup-row input:focus { outline: 2px solid var(--green); outline-offset: 1px; }
   pre.cmd {
     background: #F2F6F3; border: 1px solid var(--line); border-radius: 10px;
     padding: 0.9rem 1rem; margin: 0.9rem 0 0.6rem;
@@ -367,6 +374,16 @@
       </div>
       <p class="caption" style="margin-top:0.7rem">The beta installer is unsigned, so Windows SmartScreen will warn you. Click "More info", then "Run anyway". The Windows beta does not yet include summaries or echo cancellation.</p>
     </div>
+
+    <div class="dl-card">
+      <h3>Release notes by email</h3>
+      <p style="margin-top:0.4rem">One short email when a new version ships, with what changed. Nothing else.</p>
+      <form class="signup-row" id="signup-form">
+        <input type="email" id="signup-email" name="email" placeholder="you@example.com" required autocomplete="email" aria-label="Email address">
+        <button class="btn" type="submit" id="signup-btn">Keep me posted</button>
+      </form>
+      <p class="caption" style="margin-top:0.7rem" id="signup-msg">Your address goes in our own database, is used only for release announcements, and any reply unsubscribes you.</p>
+    </div>
   </div>
 </section>
 
@@ -454,6 +471,46 @@ function copyCmd() {
     done();
   }
 }
+
+// Email capture. Writes straight to our database over its public REST
+// endpoint. The key below is the publishable one, made to be embedded:
+// row-level security only lets it insert into the signups table, so it
+// cannot read the list or touch anything else.
+document.getElementById('signup-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var email = document.getElementById('signup-email').value.trim();
+  var btn = document.getElementById('signup-btn');
+  var msg = document.getElementById('signup-msg');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  var platform = /Mac/i.test(navigator.userAgent) ? 'mac'
+    : /Win/i.test(navigator.userAgent) ? 'windows' : null;
+  fetch('https://yutdoypkyimlygtuzcek.supabase.co/rest/v1/signups', {
+    method: 'POST',
+    headers: {
+      apikey: 'sb_publishable_my2ZuEr5nF4PzWhCUK641w_3jq9Sq3K',
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal'
+    },
+    body: JSON.stringify({ email: email, source: 'site', platform: platform })
+  }).then(function (r) {
+    if (r.ok) {
+      msg.textContent = 'Saved. You will hear from us when the next version ships.';
+      document.getElementById('signup-form').hidden = true;
+    } else if (r.status === 409) {
+      msg.textContent = 'You are already on the list.';
+      document.getElementById('signup-form').hidden = true;
+    } else {
+      msg.textContent = 'That did not save. Check the address and try again.';
+      btn.disabled = false;
+      btn.textContent = 'Keep me posted';
+    }
+  }).catch(function () {
+    msg.textContent = 'That did not save. Check your connection and try again.';
+    btn.disabled = false;
+    btn.textContent = 'Keep me posted';
+  });
+});
 </script>
 
 </body>
