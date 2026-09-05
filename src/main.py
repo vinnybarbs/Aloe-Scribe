@@ -81,6 +81,82 @@ if getattr(sys, "frozen", False):
 else:
     ROOT = Path(__file__).parent.parent
 
+def _maybe_relocate_to_applications():
+    """People double-click the app inside the mounted DMG window instead of
+    dragging it to Applications first. That runs the app from a read-only
+    volume (or Gatekeeper's translocation copy of it), where nothing about
+    the session is durable and the DMG stays mounted forever. Detect it,
+    offer to move, relaunch the real copy, and eject the disk image.
+    ALOE_NO_RELOCATE=1 skips the check (dev, tests)."""
+    if (
+        sys.platform != "darwin"
+        or not getattr(sys, "frozen", False)
+        or os.environ.get("ALOE_NO_RELOCATE")
+    ):
+        return
+    try:
+        bundle = Path(sys.executable).resolve().parents[2]
+    except IndexError:
+        return
+    p = str(bundle)
+    if not p.endswith(".app"):
+        return
+    on_dmg = p.startswith("/Volumes/") or "/AppTranslocation/" in p
+    if not on_dmg:
+        try:
+            on_dmg = bool(os.statvfs(p).f_flag & os.ST_RDONLY)
+        except OSError:
+            on_dmg = False
+    if not on_dmg:
+        return
+    r = subprocess.run(
+        [
+            "osascript",
+            "-e",
+            'display dialog "Aloe Scribe is running from the disk image, so '
+            "your settings cannot save. Move it to Applications and open it "
+            'from there?" with title "Aloe Scribe" buttons {"Quit", '
+            '"Move to Applications"} default button "Move to Applications" '
+            'with icon note',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if "Move to Applications" not in (r.stdout or ""):
+        sys.exit(0)
+    dest = "/Applications/Aloe Scribe.app"
+    try:
+        if os.path.exists(dest):
+            subprocess.run(["rm", "-rf", dest], check=True)
+        subprocess.run(["ditto", str(bundle), dest], check=True)
+    except Exception:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'display dialog "The copy failed. Drag Aloe Scribe to the '
+                'Applications folder yourself, then open it from there." '
+                'with title "Aloe Scribe" buttons {"OK"} default button "OK" '
+                "with icon caution",
+            ],
+            capture_output=True,
+        )
+        sys.exit(1)
+    # Relaunch from Applications and eject the image after this process
+    # exits. The detach must outlive us because the volume is busy while
+    # we still run from it. Translocated launches have no /Volumes path to
+    # eject, so only detach a real mount.
+    cmd = f'sleep 1; open "{dest}"'
+    if p.startswith("/Volumes/"):
+        vol = "/Volumes/" + p.split("/")[2]
+        cmd += f'; sleep 3; hdiutil detach "{vol}" >/dev/null 2>&1 || true'
+    subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True)
+    sys.exit(0)
+
+
+_maybe_relocate_to_applications()
+
+
 def _resolve_config_path() -> Path:
     """User settings live OUTSIDE the app bundle. Writing config into the
     bundle broke twice at once when the signed DMG shipped: the mounted
