@@ -85,11 +85,15 @@ def worker_env() -> dict:
     carries py2app's PYTHONHOME/PYTHONPATH pointing INTO the bundle — a venv
     interpreter inheriting them loads the bundle's stdlib extensions and
     dies (the summarizer hit the bundle's _ssl.so this way). Strip them."""
-    return {
+    env = {
         k: v
         for k, v in os.environ.items()
         if k not in ("PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE")
     }
+    # Workers parse UTF-8 model configs and transcripts; without a locale
+    # (Finder launches have none) the interpreter defaults to ASCII.
+    env["PYTHONUTF8"] = "1"
+    return env
 
 
 # ---------------------------------------------------------------------------

@@ -128,6 +128,11 @@ OPTIONS = {
         "NSMicrophoneUsageDescription": "Aloe Scribe needs microphone access to record meeting audio.",
         "NSScreenCaptureUsageDescription": "Aloe Scribe needs screen capture access to record system audio (the audio from the apps you're listening to) — no video is captured or saved.",
         "LSUIElement": False,
+        # The frozen interpreter defaults to ASCII when no locale reaches
+        # it, and Finder launches apps with none. That corrupted the config
+        # seed once and broke parakeet's own json.load of its config (both
+        # hold UTF-8 bytes). Force Python's UTF-8 mode for every launch.
+        "LSEnvironment": {"PYTHONUTF8": "1"},
     },
 }
 

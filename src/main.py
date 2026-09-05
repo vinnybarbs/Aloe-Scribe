@@ -16,6 +16,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Finder launches apps with no locale, and py2app's embedded interpreter
+# then defaults every file open to ASCII (it also ignores PYTHONUTF8).
+# That corrupted the config seed once and broke parakeet's own json.load.
+# Setting the C locale at runtime verifiably flips locale.getencoding()
+# to UTF-8, which is what open() consults. Do it before anything reads.
+import locale as _locale
+
+for _loc in ("en_US.UTF-8", "C.UTF-8", "UTF-8"):
+    try:
+        _locale.setlocale(_locale.LC_CTYPE, _loc)
+        break
+    except _locale.Error:
+        continue
+
 # Worker dispatch. The diarizer and summarizer run heavy work in
 # subprocesses invoked as [interpreter, "-c", code, args...]. In the frozen
 # app there is no separate interpreter to invoke, so the app binary
