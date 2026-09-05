@@ -23,6 +23,29 @@ DATA_FILES = [
     ("bin", ["bin/aloe-audio-capture"]),
 ]
 
+def _full_stdlib():
+    """Every importable stdlib module. The bundle vendors the whole
+    dependency set and doubles as the worker interpreter, so ANY stdlib
+    module can be needed at runtime. py2app only freezes what its static
+    graph reaches, which produced a parade of one-off failures (tty,
+    cmath, then filecmp inside transformers). Ship it all instead."""
+    import importlib.util
+    import sys as _sys
+
+    mods = []
+    for m in sorted(_sys.stdlib_module_names):
+        if m.startswith("_") or m in (
+            "antigravity", "this", "idlelib", "turtledemo",
+        ):
+            continue
+        try:
+            if importlib.util.find_spec(m) is not None:
+                mods.append(m)
+        except (ImportError, ValueError):
+            continue
+    return mods
+
+
 OPTIONS = {
     "argv_emulation": False, "iconfile": "assets/AppIcon.icns",
     "includes": [
@@ -55,7 +78,7 @@ OPTIONS = {
         # imports; excluding that tree (Senko fallout) dropped it and broke
         # Parakeet loading in the frozen app ("No module named 'cmath'").
         "cmath",
-    ],
+    ] + _full_stdlib(),
     "packages": [
         "PySide6",
         "PIL",
