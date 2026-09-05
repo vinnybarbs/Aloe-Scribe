@@ -33,6 +33,19 @@ holds anything but the pristine template or contains a personal marker.
 The Windows CI has the same check after the PyInstaller build. If an audit
 fails, fix the cause. Do not weaken the check.
 
+## What the Mac bundle contains
+
+Since v1.1.0 the bundle is self-sufficient: the whole Python dependency
+set rides inside it at `Contents/Resources/vendor` (the build script
+copies it from the venv, minus Qt and build tooling), the full standard
+library is frozen in, and the app binary emulates `python -c` so it hosts
+its own diarizer and summarizer subprocesses. No venv is needed on the
+user's machine. The model weights stay out of the bundle (GitHub caps
+release assets at 2 GiB), so first launch without models opens a setup
+dialog that downloads them from the `model-*` releases with checksum
+verification into Application Support. Publish or refresh those releases
+with `scripts/publish-model.sh`.
+
 ## Mac release
 
 One command, run on the maintainer's Mac:
