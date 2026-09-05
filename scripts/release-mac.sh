@@ -31,11 +31,10 @@ ENT="scripts/entitlements.plist"
 # Every nested Mach-O first: extension modules, dylibs, then frameworks,
 # then executables, then the bundle. --deep is deprecated and skips
 # nested bundles, which is exactly what the notary rejected.
+# Batched: the vendored dependency set holds hundreds of extension
+# modules, and one codesign process per file takes forever.
 find "$APP/Contents" -type f \( -name "*.so" -o -name "*.dylib" \) -print0 |
-    while IFS= read -r -d '' f; do
-        codesign --force --options runtime --timestamp --sign "$DEV_ID" "$f" >/dev/null 2>&1 || \
-        codesign --force --options runtime --timestamp --sign "$DEV_ID" "$f"
-    done
+    xargs -0 -n 100 codesign --force --options runtime --timestamp --sign "$DEV_ID"
 # pip-shipped Qt frameworks are malformed bundles (no Current symlink),
 # so codesign rejects the .framework directory. Sign the framework's
 # actual Mach-O binary directly — the notary accepts that.
